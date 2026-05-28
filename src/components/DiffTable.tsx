@@ -1,6 +1,7 @@
 import { useMemo, useState, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { CategoryDiff, ChangeStatus, DiffRow } from '../lib/diff';
+import type { Decision } from '../lib/merge';
 
 export interface DiffColumn<T> {
   key: string;
@@ -20,6 +21,10 @@ interface Props<T> {
   columns: DiffColumn<T>[];
   /** What to show in the "name / id" column header when no row is matched. */
   emptyMessage?: string;
+  /** Optional per-row decision state. When provided, rows with status !=
+   * unchanged show an "Apply" checkbox (checked = accept, unchecked = reject). */
+  decisions?: Map<string, Decision>;
+  onToggleDecision?: (key: string) => void;
 }
 
 type FilterMode = 'all' | 'changes-only' | ChangeStatus;
@@ -27,7 +32,10 @@ type FilterMode = 'all' | 'changes-only' | ChangeStatus;
 const ROW_HEIGHT = 36;
 const EXPANDED_EXTRA = 28;
 
-export function DiffTable<T>({ diff, columns, emptyMessage = 'No rows.' }: Props<T>) {
+export function DiffTable<T>({
+  diff, columns, emptyMessage = 'No rows.', decisions, onToggleDecision
+}: Props<T>) {
+  const showDecision = decisions !== undefined && onToggleDecision !== undefined;
   const [filter, setFilter] = useState<FilterMode>('changes-only');
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -53,7 +61,8 @@ export function DiffTable<T>({ diff, columns, emptyMessage = 'No rows.' }: Props
     return rows;
   }, [diff.rows, filter, query, columns]);
 
-  const totalWidth = columns.reduce((sum, c) => sum + c.width, 0) + 28; // +28 for left status border / expand
+  const DECISION_WIDTH = 56;
+  const totalWidth = columns.reduce((sum, c) => sum + c.width, 0) + 28 + (showDecision ? DECISION_WIDTH : 0); // +28 left status, +56 decision
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -90,7 +99,7 @@ export function DiffTable<T>({ diff, columns, emptyMessage = 'No rows.' }: Props
       />
       <div ref={parentRef} className="flex-1 overflow-auto bg-white">
         <div style={{ width: totalWidth, position: 'relative' }}>
-          <Header columns={columns} />
+          <Header columns={columns} showDecision={showDecision} decisionWidth={DECISION_WIDTH} />
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
             {virtualizer.getVirtualItems().map(vi => {
               const row = visibleRows[vi.index];
@@ -113,6 +122,9 @@ export function DiffTable<T>({ diff, columns, emptyMessage = 'No rows.' }: Props
                     columns={columns}
                     expanded={isExpanded}
                     onToggle={() => toggleExpanded(row.key)}
+                    decision={showDecision ? (decisions!.get(row.key) ?? 'accept') : undefined}
+                    onToggleDecision={showDecision ? () => onToggleDecision!(row.key) : undefined}
+                    decisionWidth={showDecision ? DECISION_WIDTH : 0}
                   />
                 </div>
               );
@@ -176,13 +188,20 @@ function FilterChip({
   );
 }
 
-function Header<T>({ columns }: { columns: DiffColumn<T>[] }) {
+function Header<T>({
+  columns, showDecision, decisionWidth
+}: { columns: DiffColumn<T>[]; showDecision: boolean; decisionWidth: number }) {
   return (
     <div
       className="flex bg-slate-100 border-b border-slate-200 text-xs uppercase tracking-wide text-slate-600 font-semibold"
       style={{ position: 'sticky', top: 0, zIndex: 1, height: ROW_HEIGHT }}
     >
       <div style={{ width: 28 }} />
+      {showDecision && (
+        <div className="px-2 py-2 text-center" style={{ width: decisionWidth }} title="Apply this change to the merged output?">
+          Apply
+        </div>
+      )}
       {columns.map(c => (
         <div
           key={c.key}
@@ -198,9 +217,18 @@ function Header<T>({ columns }: { columns: DiffColumn<T>[] }) {
 }
 
 function Row<T>({
-  row, columns, expanded, onToggle
-}: { row: DiffRow<T>; columns: DiffColumn<T>[]; expanded: boolean; onToggle: () => void }) {
+  row, columns, expanded, onToggle, decision, onToggleDecision, decisionWidth
+}: {
+  row: DiffRow<T>;
+  columns: DiffColumn<T>[];
+  expanded: boolean;
+  onToggle: () => void;
+  decision?: Decision;
+  onToggleDecision?: () => void;
+  decisionWidth: number;
+}) {
   const cls = `row-${row.status}`;
+  const showDecisionCell = decision !== undefined && row.status !== 'unchanged';
   return (
     <div className={`${cls} hover:bg-slate-100`}>
       <div
@@ -211,6 +239,24 @@ function Row<T>({
         <div className="flex items-center justify-center text-slate-400 text-xs" style={{ width: 28 }}>
           {row.status === 'modified' ? (expanded ? '▼' : '▶') : statusSymbol(row.status)}
         </div>
+        {decisionWidth > 0 && (
+          <div
+            className="flex items-center justify-center"
+            style={{ width: decisionWidth }}
+            onClick={e => e.stopPropagation()}
+          >
+            {showDecisionCell && (
+              <input
+                type="checkbox"
+                aria-label="Apply this change"
+                title={decision === 'accept' ? 'Will be applied — uncheck to revert' : 'Will be reverted — check to keep this change'}
+                checked={decision === 'accept'}
+                onChange={onToggleDecision}
+                className="w-4 h-4 cursor-pointer accent-slate-700"
+              />
+            )}
+          </div>
+        )}
         {columns.map(c => {
           const v = c.get(row);
           return (
@@ -226,7 +272,7 @@ function Row<T>({
         })}
       </div>
       {expanded && row.fields.length > 0 && (
-        <div className="ml-7 mr-3 mb-2 mt-1 border border-slate-200 rounded bg-white">
+        <div className="mr-3 mb-2 mt-1 border border-slate-200 rounded bg-white" style={{ marginLeft: 28 + decisionWidth }}>
           <table className="w-full text-xs">
             <thead>
               <tr className="text-slate-500 bg-slate-50">

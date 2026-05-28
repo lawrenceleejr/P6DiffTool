@@ -1,5 +1,6 @@
 import { DiffTable, type DiffColumn } from './DiffTable';
 import type { ActivityRecord, CategoryDiff, DiffRow } from '../lib/diff';
+import type { Decision } from '../lib/merge';
 
 const pick = (r: DiffRow<ActivityRecord>, f: keyof ActivityRecord) =>
   (r.new ?? r.old)?.[f];
@@ -28,6 +29,20 @@ function formatStatus(s?: string): string | undefined {
   }
 }
 
-export function ActivitiesTab({ diff }: { diff: CategoryDiff<ActivityRecord> }) {
-  return <DiffTable diff={diff} columns={COLS} emptyMessage="No matching activities." />;
+export function ActivitiesTab({
+  diff, decisions, onToggleDecision
+}: {
+  diff: CategoryDiff<ActivityRecord>;
+  decisions?: Map<string, Decision>;
+  onToggleDecision?: (key: string) => void;
+}) {
+  return (
+    <DiffTable
+      diff={diff}
+      columns={COLS}
+      emptyMessage="No matching activities."
+      decisions={decisions}
+      onToggleDecision={onToggleDecision}
+    />
+  );
 }

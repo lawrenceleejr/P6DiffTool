@@ -12,6 +12,7 @@ const XER_FILTER = [{ name: 'Primavera P6 XER', extensions: ['xer'] }];
 export interface LoadedXer {
   path: string;
   fileName: string;
+  text: string;     // original file text, kept so the merge engine can re-parse as a "clone"
   xer: XER;
 }
 
@@ -26,7 +27,7 @@ export async function pickAndLoadXER(): Promise<LoadedXer | null> {
 export async function loadXerFromPath(path: string): Promise<LoadedXer> {
   const text = await readTextFile(path);
   const xer = new XER(text);
-  return { path, fileName: basename(path), xer };
+  return { path, fileName: basename(path), text, xer };
 }
 
 /** V2: serialize an XER (after merge) and prompt the user for a save location. */
@@ -37,6 +38,11 @@ export async function saveXer(xer: XER, defaultName = 'merged.xer'): Promise<str
   // accepts a real CR+LF, so we pass it via a small cast.
   await writeTextFile(path, xer.toXERString({ lineEnding: '\r\n' as unknown as '\\r\\n' }));
   return path;
+}
+
+/** V2: serialize an XER to a raw string (for tests or in-memory pipelines). */
+export function serializeXerText(xer: XER): string {
+  return xer.toXERString({ lineEnding: '\r\n' as unknown as '\\r\\n' });
 }
 
 function basename(p: string): string {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { FilePickerBar } from './components/FilePickerBar';
 import { Dashboard } from './components/Dashboard';
 import { ActivitiesTab } from './components/ActivitiesTab';
@@ -9,6 +9,8 @@ import { CalendarsTab } from './components/CalendarsTab';
 import { diffXer, type DiffResult } from './lib/diff';
 import { summarize, type FileSummary } from './lib/summary';
 import type { LoadedXer } from './lib/xer';
+import { buildMergedXer, decisionCounts, emptyDecisions, type DecisionState, type Decision } from './lib/merge';
+import { saveXer } from './lib/xer';
 
 type Tab = 'overview' | 'activities' | 'relationships' | 'wbs' | 'resources' | 'calendars';
 
@@ -17,6 +19,8 @@ export default function App() {
   const [revised, setRevised] = useState<LoadedXer | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
   const [error, setError] = useState<string | null>(null);
+  const [decisions, setDecisions] = useState<DecisionState>(() => emptyDecisions());
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   const baselineSummary: FileSummary | null = useMemo(
     () => (baseline ? safeSummarize(baseline) : null),
@@ -38,10 +42,61 @@ export default function App() {
     }
   }, [baseline, revised]);
 
+  // Reset decisions whenever the input files change (stale keys would be harmless
+  // but the count would look misleading).
+  useMemo(() => {
+    setDecisions(emptyDecisions());
+    setExportStatus(null);
+  }, [baseline?.path, revised?.path]);
+
+  const toggleActivityDecision = useCallback((key: string) => {
+    setDecisions(prev => {
+      const next: DecisionState = {
+        activities: new Map(prev.activities),
+        relationships: prev.relationships
+      };
+      const cur: Decision = next.activities.get(key) ?? 'accept';
+      next.activities.set(key, cur === 'accept' ? 'reject' : 'accept');
+      return next;
+    });
+  }, []);
+
+  const toggleRelationshipDecision = useCallback((key: string) => {
+    setDecisions(prev => {
+      const next: DecisionState = {
+        activities: prev.activities,
+        relationships: new Map(prev.relationships)
+      };
+      const cur: Decision = next.relationships.get(key) ?? 'accept';
+      next.relationships.set(key, cur === 'accept' ? 'reject' : 'accept');
+      return next;
+    });
+  }, []);
+
+  async function onExport() {
+    if (!baseline || !revised || !diff) return;
+    setExportStatus('Building merged XER…');
+    try {
+      const { xer: merged, stats } = buildMergedXer(baseline.text, revised.text, diff, decisions);
+      const defaultName = revised.fileName.replace(/\.xer$/i, '') + '-merged.xer';
+      const written = await saveXer(merged, defaultName);
+      if (written) {
+        const r = stats.activities.reverted + stats.relationships.reverted;
+        setExportStatus(`Saved (${r} change${r === 1 ? '' : 's'} reverted) → ${written}`);
+      } else {
+        setExportStatus(null);
+      }
+    } catch (e) {
+      setExportStatus(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   function swap() {
     setBaseline(revised);
     setRevised(baseline);
   }
+
+  const counts = diff ? decisionCounts(diff, decisions) : { accepted: 0, rejected: 0 };
 
   return (
     <div className="flex flex-col h-full">
@@ -51,6 +106,11 @@ export default function App() {
         onBaselineChange={setBaseline}
         onRevisedChange={setRevised}
         onSwap={swap}
+        canExport={!!diff}
+        onExport={onExport}
+        exportStatus={exportStatus}
+        acceptedCount={counts.accepted}
+        rejectedCount={counts.rejected}
       />
       <Tabs tab={tab} setTab={setTab} diff={diff} hasFiles={!!(baseline || revised)} />
       {error && (
@@ -62,8 +122,20 @@ export default function App() {
         {tab === 'overview' && (
           <Dashboard baseline={baselineSummary} revised={revisedSummary} diff={diff} />
         )}
-        {tab === 'activities'    && diff && <ActivitiesTab    diff={diff.activities} />}
-        {tab === 'relationships' && diff && <RelationshipsTab diff={diff.relationships} />}
+        {tab === 'activities'    && diff && (
+          <ActivitiesTab
+            diff={diff.activities}
+            decisions={decisions.activities}
+            onToggleDecision={toggleActivityDecision}
+          />
+        )}
+        {tab === 'relationships' && diff && (
+          <RelationshipsTab
+            diff={diff.relationships}
+            decisions={decisions.relationships}
+            onToggleDecision={toggleRelationshipDecision}
+          />
+        )}
         {tab === 'wbs'           && diff && <WbsTab           diff={diff.wbs} />}
         {tab === 'resources'     && diff && <ResourcesTab     diff={diff.resources} />}
         {tab === 'calendars'     && diff && <CalendarsTab     diff={diff.calendars} />}

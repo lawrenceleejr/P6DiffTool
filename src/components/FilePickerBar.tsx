@@ -7,9 +7,17 @@ interface Props {
   onBaselineChange: (v: LoadedXer | null) => void;
   onRevisedChange: (v: LoadedXer | null) => void;
   onSwap: () => void;
+  canExport: boolean;
+  onExport: () => void;
+  exportStatus: string | null;
+  acceptedCount: number;
+  rejectedCount: number;
 }
 
-export function FilePickerBar({ baseline, revised, onBaselineChange, onRevisedChange, onSwap }: Props) {
+export function FilePickerBar({
+  baseline, revised, onBaselineChange, onRevisedChange, onSwap,
+  canExport, onExport, exportStatus, acceptedCount, rejectedCount
+}: Props) {
   return (
     <div className="border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
       <div className="flex items-center gap-3 flex-wrap">
@@ -38,8 +46,27 @@ export function FilePickerBar({ baseline, revised, onBaselineChange, onRevisedCh
           <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-added-100 border border-added-500"></span>Added</span>
           <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-removed-100 border border-removed-500"></span>Removed</span>
           <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-sm bg-modified-100 border border-modified-500"></span>Modified</span>
+          {canExport && (
+            <>
+              <span className="mx-1 h-4 w-px bg-slate-300" />
+              <span className="text-slate-600">
+                <b className="text-slate-900">{acceptedCount}</b> apply,{' '}
+                <b className="text-slate-900">{rejectedCount}</b> revert
+              </span>
+              <button
+                onClick={onExport}
+                className="px-3 py-1.5 text-sm font-medium rounded border border-slate-800 bg-slate-800 text-white hover:bg-slate-700"
+                title="Save a merged XER reflecting your accept/reject decisions"
+              >
+                Export merged XER…
+              </button>
+            </>
+          )}
         </div>
       </div>
+      {exportStatus && (
+        <div className="mt-1 text-xs text-slate-600 truncate" title={exportStatus}>{exportStatus}</div>
+      )}
     </div>
   );
 }

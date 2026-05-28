@@ -1,5 +1,6 @@
 import { DiffTable, type DiffColumn } from './DiffTable';
 import type { RelationshipRecord, CategoryDiff, DiffRow } from '../lib/diff';
+import type { Decision } from '../lib/merge';
 
 const pick = (r: DiffRow<RelationshipRecord>, f: keyof RelationshipRecord) =>
   (r.new ?? r.old)?.[f];
@@ -22,6 +23,20 @@ function formatType(t?: string): string | undefined {
   }
 }
 
-export function RelationshipsTab({ diff }: { diff: CategoryDiff<RelationshipRecord> }) {
-  return <DiffTable diff={diff} columns={COLS} emptyMessage="No matching relationships." />;
+export function RelationshipsTab({
+  diff, decisions, onToggleDecision
+}: {
+  diff: CategoryDiff<RelationshipRecord>;
+  decisions?: Map<string, Decision>;
+  onToggleDecision?: (key: string) => void;
+}) {
+  return (
+    <DiffTable
+      diff={diff}
+      columns={COLS}
+      emptyMessage="No matching relationships."
+      decisions={decisions}
+      onToggleDecision={onToggleDecision}
+    />
+  );
 }
