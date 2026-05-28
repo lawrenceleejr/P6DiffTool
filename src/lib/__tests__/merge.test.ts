@@ -165,3 +165,50 @@ describe('applyBranchToTrunk — round-trip', () => {
     expect(new XER(text).tasks.length).toBe(merged.tasks.length);
   });
 });
+
+describe('applyBranchToTrunk — TASK update_date is bumped', () => {
+  // P6's XER import uses TASK.update_date to decide whether a row has
+  // changed since the last sync; if we don't bump it the row's content
+  // change is silently ignored on import. These tests pin the behavior.
+
+  const { trunkText, branchText, trunk, branch } = load();
+  const diff = diffXer(trunk, branch);
+
+  function rawTaskUpdateDate(xer: XER, taskCode: string): string | undefined {
+    const t = [...xer.tasks].find(x => x.taskCode === taskCode);
+    if (!t) return undefined;
+    const tbl = xer.tables.find(tt => tt.name === 'TASK');
+    if (!tbl) return undefined;
+    const idIdx  = tbl.header.indexOf('task_id');
+    const updIdx = tbl.header.indexOf('update_date');
+    if (idIdx < 0 || updIdx < 0) return undefined;
+    const row = tbl.rows.find(r => r[idIdx] === String(t.taskId));
+    return row?.[updIdx];
+  }
+
+  it("a modified activity's update_date is rewritten to 'now'", () => {
+    const originalUpd = rawTaskUpdateDate(trunk, 'A1010');
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
+    const mergedUpd = rawTaskUpdateDate(merged, 'A1010');
+    expect(mergedUpd).toBeDefined();
+    expect(mergedUpd).not.toBe(originalUpd);
+    // 'now'-like timestamp must roughly match this year, in YYYY-MM-DD HH:mm form
+    expect(mergedUpd).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  });
+
+  it("an inserted activity's create_date and update_date are both set", () => {
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
+    const tbl = merged.tables.find(t => t.name === 'TASK')!;
+    const idIdx  = tbl.header.indexOf('task_id');
+    const codeIdx = tbl.header.indexOf('task_code');
+    const updIdx = tbl.header.indexOf('update_date');
+    const crtIdx = tbl.header.indexOf('create_date');
+    const updUserIdx = tbl.header.indexOf('update_user');
+    const a1015Row = tbl.rows.find(r => r[codeIdx] === 'A1015');
+    expect(a1015Row).toBeDefined();
+    expect(a1015Row![updIdx]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(a1015Row![crtIdx]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(a1015Row![updUserIdx]).toBe('p6difftool');
+    void idIdx;
+  });
+});

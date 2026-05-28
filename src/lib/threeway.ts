@@ -21,6 +21,7 @@ import { diffActivities } from './diff/activities';
 import { diffRelationships } from './diff/relationships';
 import { toActivityRecord } from './diff/activities';
 import { durationHours } from './diff/parser-utils';
+import { stampTaskUpdate, stampTaskInsert } from './xer-stamp';
 
 // ---- Types -----------------------------------------------------------------
 
@@ -345,6 +346,7 @@ function applyActivityRow(
         }
       }
       if (Object.keys(patch).length === 0) return 'skipped';
+      stampTaskUpdate(patch);
       return merged.updateTaskRow(t.taskId, patch) ? 'applied' : 'skipped';
     }
     return 'skipped';
@@ -408,6 +410,7 @@ function applyActivityRow(
     // `unresolved` status / unresolvedCount gates export at the UI layer.
     let didUpdate = false;
     if (Object.keys(patch).length > 0) {
+      stampTaskUpdate(patch);
       didUpdate = merged.updateTaskRow(t.taskId, patch);
     }
     if (anyUnresolved) return 'unresolved';
@@ -516,6 +519,7 @@ function insertTaskFrom(merged: XER, sourceXer: XER, rec: ActivityRecord): boole
   // different internal IDs for the same logical project (we deliberately
   // ignore project name for matching).
   if (merged.projects.length > 0) values.proj_id = String(merged.projects[0].projId);
+  stampTaskInsert(values);
   merged.insertTaskRow(values);
   return true;
 }

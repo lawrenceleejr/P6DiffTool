@@ -19,6 +19,7 @@
 
 import { XER } from 'xer-parser';
 import type { DiffResult, DiffRow, ActivityRecord, RelationshipRecord, ChangeStatus } from './diff';
+import { stampTaskUpdate, stampTaskInsert } from './xer-stamp';
 
 export type Decision = 'apply' | 'skip';
 
@@ -110,7 +111,9 @@ function applyActivity(merged: XER, branchXer: XER, row: DiffRow<ActivityRecord>
       const col = TASK_FIELD_TO_COLUMN[f.field];
       if (col) patch[col] = formatXerValue(f.newValue);
     }
-    return Object.keys(patch).length > 0 && merged.updateTaskRow(t.taskId, patch);
+    if (Object.keys(patch).length === 0) return false;
+    stampTaskUpdate(patch);
+    return merged.updateTaskRow(t.taskId, patch);
   }
   return false;
 }
@@ -146,6 +149,7 @@ function insertTaskFromBranch(merged: XER, branchXer: XER, rec: ActivityRecord):
   if (!values) return false;
   values.task_id = String(nextTaskId(merged));
   retargetProjId(merged, values);
+  stampTaskInsert(values);
   merged.insertTaskRow(values);
   return true;
 }
