@@ -1,28 +1,40 @@
 import { useState } from 'react';
 import { pickAndLoadXER, type LoadedXer } from '../lib/xer';
 
-export type DropTargetSlot = 'baseline' | 'revised';
+export type DropTargetSlot = 'baseline' | 'revised' | 'target';
+
+export interface ExportSummary {
+  /** When in 2-way mode: apply/revert counts. */
+  twoWay?: { accepted: number; rejected: number };
+  /** When in 3-way mode: clean / no-op / unresolved-conflict counts. */
+  threeWay?: { clean: number; noOp: number; conflicts: number; unresolved: number };
+}
 
 interface Props {
   baseline: LoadedXer | null;
   revised: LoadedXer | null;
+  target: LoadedXer | null;
   onBaselineChange: (v: LoadedXer | null) => void;
   onRevisedChange: (v: LoadedXer | null) => void;
+  onTargetChange: (v: LoadedXer | null) => void;
   onSwap: () => void;
   canExport: boolean;
   onExport: () => void;
   isExporting: boolean;
   exportStatus: string | null;
-  acceptedCount: number;
-  rejectedCount: number;
+  exportSummary: ExportSummary;
   /** Which slot the predicted drop target is, while a file is being dragged. */
   activeDropTarget: DropTargetSlot | null;
 }
 
 export function FilePickerBar({
-  baseline, revised, onBaselineChange, onRevisedChange, onSwap,
-  canExport, onExport, isExporting, exportStatus, acceptedCount, rejectedCount, activeDropTarget
+  baseline, revised, target,
+  onBaselineChange, onRevisedChange, onTargetChange, onSwap,
+  canExport, onExport, isExporting, exportStatus, exportSummary, activeDropTarget
 }: Props) {
+  const threeWay = exportSummary.threeWay;
+  const exportLabel = threeWay ? 'Export patched target…' : 'Export merged XER…';
+  const exportDisabled = isExporting || !!(threeWay && threeWay.unresolved > 0);
   return (
     <div className="border-b border-line bg-bg-surface px-4 py-3">
       <div className="flex items-center gap-3 flex-wrap">
@@ -32,7 +44,7 @@ export function FilePickerBar({
 
         <FileSlot
           slot="baseline"
-          label="Baseline (File A)"
+          label="Baseline (A)"
           value={baseline}
           onChange={onBaselineChange}
           highlighted={activeDropTarget === 'baseline'}
@@ -49,10 +61,19 @@ export function FilePickerBar({
 
         <FileSlot
           slot="revised"
-          label="Revised (File B)"
+          label="Revised (B)"
           value={revised}
           onChange={onRevisedChange}
           highlighted={activeDropTarget === 'revised'}
+        />
+
+        <FileSlot
+          slot="target"
+          label="Target (C)"
+          optional
+          value={target}
+          onChange={onTargetChange}
+          highlighted={activeDropTarget === 'target'}
         />
 
         <div className="ml-auto flex items-center gap-3 text-xs text-ink-300">
@@ -62,18 +83,31 @@ export function FilePickerBar({
           {canExport && (
             <>
               <span className="mx-1 h-4 w-px bg-line-strong" />
-              <span className="text-ink-300">
-                <b className="text-ink-50">{acceptedCount}</b> apply ·{' '}
-                <b className="text-ink-50">{rejectedCount}</b> revert
-              </span>
+              {threeWay ? (
+                <span className="text-ink-300">
+                  3-way · <b className="text-emerald-300">{threeWay.clean}</b> clean ·{' '}
+                  <b className="text-ink-300">{threeWay.noOp}</b> no-op ·{' '}
+                  <b className={threeWay.unresolved > 0 ? 'text-amber-300' : 'text-ink-300'}>
+                    {threeWay.unresolved}/{threeWay.conflicts}
+                  </b> unresolved
+                </span>
+              ) : exportSummary.twoWay && (
+                <span className="text-ink-300">
+                  <b className="text-ink-50">{exportSummary.twoWay.accepted}</b> apply ·{' '}
+                  <b className="text-ink-50">{exportSummary.twoWay.rejected}</b> revert
+                </span>
+              )}
               <button
                 onClick={onExport}
-                disabled={isExporting}
-                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-accent-ink hover:bg-accent-hover transition-colors shadow-sm disabled:opacity-60 disabled:cursor-wait"
-                title="Save a merged XER reflecting your accept/reject decisions"
+                disabled={exportDisabled}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-accent-ink hover:bg-accent-hover transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                title={threeWay && threeWay.unresolved > 0
+                  ? `Resolve ${threeWay.unresolved} conflict${threeWay.unresolved === 1 ? '' : 's'} in the Conflicts tab first`
+                  : threeWay ? 'Apply A→B onto Target and save'
+                  : 'Save a merged XER reflecting your accept/reject decisions'}
               >
                 {isExporting && <Spinner />}
-                {isExporting ? 'Exporting…' : 'Export merged XER…'}
+                {isExporting ? 'Exporting…' : exportLabel}
               </button>
             </>
           )}
@@ -92,13 +126,14 @@ export function FilePickerBar({
 }
 
 function FileSlot({
-  slot, label, value, onChange, highlighted
+  slot, label, value, onChange, highlighted, optional
 }: {
   slot: DropTargetSlot;
   label: string;
   value: LoadedXer | null;
   onChange: (v: LoadedXer | null) => void;
   highlighted: boolean;
+  optional?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -116,7 +151,7 @@ function FileSlot({
     }
   }
 
-  const btnLabel = busy ? 'Loading…' : value ? 'Change…' : `Choose ${label.split(' ')[0]}`;
+  const btnLabel = busy ? 'Loading…' : value ? 'Change…' : optional ? '+ Target' : `Choose ${label.split(' ')[0]}`;
 
   return (
     <div
@@ -126,18 +161,19 @@ function FileSlot({
       <button
         onClick={pick}
         disabled={busy}
-        className="px-3 py-1.5 text-sm font-medium rounded-md border border-line bg-bg-raised hover:bg-bg-hover disabled:opacity-50 text-ink-100 transition-colors"
-        title="Click to choose, or drag an .xer file anywhere on this bar"
+        className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${optional && !value ? 'border-line/60 bg-bg-base hover:bg-bg-hover text-ink-300 border-dashed' : 'border-line bg-bg-raised hover:bg-bg-hover text-ink-100'} disabled:opacity-50`}
+        title={optional && !value
+          ? 'Optional: load a third file to apply A→B onto a different schedule (3-way merge)'
+          : 'Click to choose, or drag an .xer file anywhere on this bar'}
       >
-        <span className="text-ink-300 mr-1.5">{label}:</span>
-        {btnLabel}
+        {value || !optional ? <><span className="text-ink-300 mr-1.5">{label}:</span>{btnLabel}</> : btnLabel}
       </button>
       <div className="text-xs truncate max-w-[14rem]" title={value?.path ?? ''}>
         {err ? (
           <span className="text-red-400">Error: {err}</span>
         ) : value ? (
           <span className="text-ink-100">{value.fileName}</span>
-        ) : (
+        ) : optional ? null : (
           <span className="text-ink-400">— drop or pick —</span>
         )}
       </div>

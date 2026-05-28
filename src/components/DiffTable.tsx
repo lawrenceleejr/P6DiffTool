@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react';
+import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { CategoryDiff, ChangeStatus, DiffRow } from '../lib/diff';
 import type { Decision } from '../lib/merge';
@@ -6,10 +6,13 @@ import type { Decision } from '../lib/merge';
 export interface DiffColumn<T> {
   key: string;
   header: string;
+  /** Default width in pixels. The user can resize via the drag handle. */
   width: number;
   get: (row: DiffRow<T>) => unknown;
   align?: 'left' | 'right';
   format?: (value: unknown) => string;
+  /** Set false to disable sorting on this column (default: enabled). */
+  sortable?: boolean;
 }
 
 interface Props<T> {
@@ -22,9 +25,11 @@ interface Props<T> {
 }
 
 type FilterMode = 'all' | 'changes-only' | ChangeStatus;
+type SortState = { key: string; dir: 'asc' | 'desc' } | null;
 
 const ROW_HEIGHT = 38;
 const EXPANDED_EXTRA = 30;
+const MIN_COL_WIDTH = 60;
 
 export function DiffTable<T>({
   diff, columns, emptyMessage = 'No rows.', decisions, onToggleDecision, onBulkSetDecisions
@@ -32,9 +37,19 @@ export function DiffTable<T>({
   const [filter, setFilter] = useState<FilterMode>('changes-only');
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [sort, setSort] = useState<SortState>(null);
+  const [widthOverrides, setWidthOverrides] = useState<Map<string, number>>(new Map());
   const showDecision = decisions !== undefined && onToggleDecision !== undefined;
 
-  const visibleRows = useMemo(() => {
+  // Reset overrides when the column set changes (e.g. switching tabs).
+  useEffect(() => { setWidthOverrides(new Map()); setSort(null); }, [columns]);
+
+  const colWidth = useCallback(
+    (c: DiffColumn<T>) => widthOverrides.get(c.key) ?? c.width,
+    [widthOverrides]
+  );
+
+  const filteredRows = useMemo(() => {
     let rows = diff.rows;
     if (filter === 'changes-only') {
       rows = rows.filter(r => r.status !== 'unchanged');
@@ -55,13 +70,22 @@ export function DiffTable<T>({
     return rows;
   }, [diff.rows, filter, query, columns]);
 
+  const visibleRows = useMemo(() => {
+    if (!sort) return filteredRows;
+    const col = columns.find(c => c.key === sort.key);
+    if (!col) return filteredRows;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    return [...filteredRows].sort((a, b) => compareValues(col.get(a), col.get(b)) * dir);
+  }, [filteredRows, sort, columns]);
+
   const visibleChangeKeys = useMemo(
     () => visibleRows.filter(r => r.status !== 'unchanged').map(r => r.key),
     [visibleRows]
   );
 
   const DECISION_WIDTH = 56;
-  const totalWidth = columns.reduce((sum, c) => sum + c.width, 0) + 28 + (showDecision ? DECISION_WIDTH : 0);
+  const totalWidth =
+    columns.reduce((sum, c) => sum + colWidth(c), 0) + 28 + (showDecision ? DECISION_WIDTH : 0);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -86,6 +110,43 @@ export function DiffTable<T>({
     virtualizer.measure();
   }
 
+  function onHeaderClick(col: DiffColumn<T>) {
+    if (col.sortable === false) return;
+    setSort(prev => {
+      if (!prev || prev.key !== col.key) return { key: col.key, dir: 'asc' };
+      if (prev.dir === 'asc')  return { key: col.key, dir: 'desc' };
+      return null;            // cycle off
+    });
+  }
+
+  function startResize(colKey: string, e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const col = columns.find(c => c.key === colKey);
+    if (!col) return;
+    const startX = e.clientX;
+    const startWidth = colWidth(col);
+
+    function onMove(ev: MouseEvent) {
+      const w = Math.max(MIN_COL_WIDTH, startWidth + (ev.clientX - startX));
+      setWidthOverrides(prev => {
+        const next = new Map(prev);
+        next.set(colKey, w);
+        return next;
+      });
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
   return (
     <div className="flex flex-col h-full">
       <Toolbar
@@ -106,7 +167,15 @@ export function DiffTable<T>({
       />
       <div ref={parentRef} className="flex-1 overflow-auto bg-bg-base">
         <div style={{ width: totalWidth, position: 'relative' }}>
-          <Header columns={columns} showDecision={showDecision} decisionWidth={DECISION_WIDTH} />
+          <Header
+            columns={columns}
+            showDecision={showDecision}
+            decisionWidth={DECISION_WIDTH}
+            colWidth={colWidth}
+            sort={sort}
+            onHeaderClick={onHeaderClick}
+            onStartResize={startResize}
+          />
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
             {virtualizer.getVirtualItems().map(vi => {
               const row = visibleRows[vi.index];
@@ -127,6 +196,7 @@ export function DiffTable<T>({
                   <Row
                     row={row}
                     columns={columns}
+                    colWidth={colWidth}
                     expanded={isExpanded}
                     onToggle={() => toggleExpanded(row.key)}
                     decision={showDecision ? (decisions!.get(row.key) ?? 'accept') : undefined}
@@ -222,8 +292,16 @@ function FilterChip({
 }
 
 function Header<T>({
-  columns, showDecision, decisionWidth
-}: { columns: DiffColumn<T>[]; showDecision: boolean; decisionWidth: number }) {
+  columns, showDecision, decisionWidth, colWidth, sort, onHeaderClick, onStartResize
+}: {
+  columns: DiffColumn<T>[];
+  showDecision: boolean;
+  decisionWidth: number;
+  colWidth: (c: DiffColumn<T>) => number;
+  sort: SortState;
+  onHeaderClick: (c: DiffColumn<T>) => void;
+  onStartResize: (key: string, e: React.MouseEvent) => void;
+}) {
   return (
     <div
       className="flex bg-bg-surface border-b border-line text-xs uppercase tracking-wide text-ink-300 font-semibold"
@@ -235,25 +313,44 @@ function Header<T>({
           Apply
         </div>
       )}
-      {columns.map(c => (
-        <div
-          key={c.key}
-          className="px-2 py-2 truncate"
-          style={{ width: c.width, textAlign: c.align ?? 'left' }}
-          title={c.header}
-        >
-          {c.header}
-        </div>
-      ))}
+      {columns.map(c => {
+        const sortable = c.sortable !== false;
+        const isSorted = sort?.key === c.key;
+        const arrow = !isSorted ? '' : sort!.dir === 'asc' ? ' ▲' : ' ▼';
+        return (
+          <div
+            key={c.key}
+            className="relative flex items-center select-none"
+            style={{ width: colWidth(c), height: ROW_HEIGHT, textAlign: c.align ?? 'left' }}
+            title={c.header}
+          >
+            <button
+              type="button"
+              onClick={() => onHeaderClick(c)}
+              disabled={!sortable}
+              className={`flex-1 h-full px-2 truncate text-left ${c.align === 'right' ? 'text-right' : ''} ${sortable ? 'hover:text-ink-100 cursor-pointer' : 'cursor-default'} ${isSorted ? 'text-accent' : ''}`}
+              style={{ textAlign: c.align ?? 'left' }}
+            >
+              {c.header}{arrow}
+            </button>
+            <div
+              onMouseDown={e => onStartResize(c.key, e)}
+              className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-accent/60"
+              title="Drag to resize"
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 function Row<T>({
-  row, columns, expanded, onToggle, decision, onToggleDecision, decisionWidth
+  row, columns, colWidth, expanded, onToggle, decision, onToggleDecision, decisionWidth
 }: {
   row: DiffRow<T>;
   columns: DiffColumn<T>[];
+  colWidth: (c: DiffColumn<T>) => number;
   expanded: boolean;
   onToggle: () => void;
   decision?: Decision;
@@ -296,7 +393,7 @@ function Row<T>({
             <div
               key={c.key}
               className="px-2 truncate text-sm text-ink-100"
-              style={{ width: c.width, textAlign: c.align ?? 'left' }}
+              style={{ width: colWidth(c), textAlign: c.align ?? 'left' }}
               title={v == null ? '' : String(v)}
             >
               {v == null ? <span className="text-ink-500">—</span> : String(v)}
@@ -342,4 +439,19 @@ function statusSymbol(s: ChangeStatus): string {
 function formatValue(v: unknown): string {
   if (v == null || v === '') return '—';
   return String(v);
+}
+
+/** Sort comparator: undefined sorts last; numbers numerically; otherwise
+ * locale-aware string compare. */
+function compareValues(a: unknown, b: unknown): number {
+  const aMissing = a == null || a === '';
+  const bMissing = b == null || b === '';
+  if (aMissing && bMissing) return 0;
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+  const na = Number(a), nb = Number(b);
+  if (Number.isFinite(na) && Number.isFinite(nb) && String(a).trim() !== '' && String(b).trim() !== '') {
+    return na - nb;
+  }
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
 }

@@ -309,4 +309,54 @@ const REV = {
 
 writeFileSync(join(here, 'sample-baseline.xer'), buildXer(BASE));
 writeFileSync(join(here, 'sample-revised.xer'),  buildXer(REV));
-console.log('wrote sample-baseline.xer and sample-revised.xer');
+
+// ---------- Target (C) -------------------------------------------------------
+//
+// Third descendant of BASE used to exercise the 3-way merge engine. Designed
+// so that A->B applied onto C hits every conflict kind we care about:
+//
+//   add-add        : C adds its own A1015 (Design Plumbing) — B adds a
+//                    different A1015 (Design HVAC).
+//   delete-modify  : B modifies A2000 (rename + start shift) — C deletes it.
+//   modify-delete  : B deletes A2020 — C renames it to "Install Roof (Steel)".
+//   modify-modify  : B sets A1010 duration 40 -> 48 — C sets it to 56.
+//   field no-op    : B sets A1010 totalFloat 16 -> 8 — C already has 8.
+//   clean apply    : B sets A3000 status TK_NotStart -> TK_Active — C untouched.
+//   clean lag      : B sets A1010->A1020 lag 0 -> 8 — C unchanged.
+//   modify/delete  : B deletes A2010->A2020 — C modified its lag to 16.   (relationships)
+
+const TARGET = {
+  dataDate: '2026-04-08 00:00',   // different from both A and B
+  planStart: '2026-04-01 08:00',
+  planFinish: '2026-07-31 17:00',
+  activities: [
+    BASE.activities.find(a => a.code === 'A1000'),
+    // A1010: C sets duration 56 (B says 48) and totalFloat 8 (B also says 8)
+    { ...BASE.activities.find(a => a.code === 'A1010'), durHrs: 56, totalFloat: 8 },
+    BASE.activities.find(a => a.code === 'A1020'),
+    // A1015 — C inserts its own "Design Plumbing" (B inserts "Design HVAC")
+    { taskId: 1099, wbsId: 110, code: 'A1015', name: 'Design Plumbing',
+      type: 'TT_Task', status: 'TK_NotStart', durHrs: 16, totalFloat: 0,
+      targetStart: '2026-04-15 08:00', targetEnd: '2026-04-16 17:00' },
+    // A2000 REMOVED in C (B modifies it -> delete/modify conflict)
+    BASE.activities.find(a => a.code === 'A2010'),
+    // A2020 renamed in C (B deletes it -> modify/delete conflict)
+    { ...BASE.activities.find(a => a.code === 'A2020'), name: 'Install Roof (Steel)' },
+    BASE.activities.find(a => a.code === 'A3000'),
+    BASE.activities.find(a => a.code === 'A3010')
+  ],
+  relationships: [
+    { predTaskId: 1000, succTaskId: 1010, type: 'PR_FS', lagHrs: 0 },
+    { predTaskId: 1010, succTaskId: 1020, type: 'PR_FS', lagHrs: 0 }, // B adds lag 8 -> clean modify
+    // C re-wires A1020 around the removed A2000, A1020 -> A2010
+    { predTaskId: 1020, succTaskId: 2010, type: 'PR_FS', lagHrs: 0 },
+    // C modifies A2010 -> A2020 lag to 16 (B deletes this relationship -> modify/delete conflict)
+    { predTaskId: 2010, succTaskId: 2020, type: 'PR_FS', lagHrs: 16 },
+    // A2020 -> A3000 in C with original lag 0; B deletes it -> clean delete
+    { predTaskId: 2020, succTaskId: 3000, type: 'PR_FS', lagHrs: 0 },
+    { predTaskId: 3000, succTaskId: 3010, type: 'PR_FS', lagHrs: 0 }
+  ]
+};
+
+writeFileSync(join(here, 'sample-target.xer'),   buildXer(TARGET));
+console.log('wrote sample-baseline.xer, sample-revised.xer, sample-target.xer');

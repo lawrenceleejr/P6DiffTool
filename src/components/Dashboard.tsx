@@ -10,7 +10,7 @@ interface Props {
 export function Dashboard({ baseline, revised, diff }: Props) {
   if (!baseline && !revised) {
     return (
-      <div className="p-12 text-center text-ink-300">
+      <div className="h-full overflow-auto p-12 text-center text-ink-300">
         <div className="text-2xl font-semibold text-ink-100 mb-2">Compare two P6 schedules</div>
         <p className="text-sm text-ink-400 max-w-md mx-auto">
           Drag an <span className="font-mono text-ink-200">.xer</span> file onto the
@@ -22,9 +22,11 @@ export function Dashboard({ baseline, revised, diff }: Props) {
   }
 
   return (
-    <div className="p-6 space-y-6 overflow-auto">
-      {diff && <DiffSummaryCards diff={diff} />}
-      <ProjectStatusTable baseline={baseline} revised={revised} />
+    <div className="h-full overflow-auto">
+      <div className="p-6 space-y-6">
+        {diff && <DiffSummaryCards diff={diff} />}
+        <ProjectStatusTable baseline={baseline} revised={revised} />
+      </div>
     </div>
   );
 }
