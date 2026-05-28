@@ -21,6 +21,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<DecisionState>(() => emptyDecisions());
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const [activeDropTarget, setActiveDropTarget] = useState<DropTargetSlot | null>(null);
 
   const baselineSummary: FileSummary | null = useMemo(
@@ -96,9 +97,13 @@ export default function App() {
 
   // ---------- Drag-and-drop XER files onto the file slots ------------------
   //
-  // Tauri 2 fires window-level drag/drop events with a position. We hit-test
-  // the position against the DOM to find which slot ([data-drop-slot]) the
-  // user is over, highlight it on 'over', and load the file into it on 'drop'.
+  // Tauri 2's drag/drop position is window-coordinate-relative, which varies
+  // by platform and decoration state — hit-testing against DOM rects is
+  // unreliable. We instead pick the target slot from app state: if a slot is
+  // empty, it wins; if both are filled, we replace whichever was loaded first
+  // (baseline). Two-file drops fill baseline then revised in order.
+
+  const predictedDropTarget: DropTargetSlot = baseline && !revised ? 'revised' : 'baseline';
 
   useEffect(() => {
     let cleanup: (() => void) | null = null;
@@ -119,20 +124,17 @@ export default function App() {
           const p = event.payload as any;
           const type: string = p?.type;
           if (type === 'over' || type === 'enter') {
-            setActiveDropTarget(slotAtPoint(p.position));
+            setActiveDropTarget(predictedDropTarget);
           } else if (type === 'leave') {
             setActiveDropTarget(null);
           } else if (type === 'drop') {
             const paths: string[] = (p.paths ?? []).filter((s: string) => s.toLowerCase().endsWith('.xer'));
-            const target = slotAtPoint(p.position);
             setActiveDropTarget(null);
             if (paths.length === 0) return;
-            // Single drop: target wins; if no target, fill the empty slot.
             if (paths.length === 1) {
-              const slot: DropTargetSlot = target ?? (baseline ? 'revised' : 'baseline');
-              loadInto(slot, paths[0]);
+              loadInto(predictedDropTarget, paths[0]);
             } else {
-              // Two+ files: first -> baseline, second -> revised. Anything else ignored.
+              // Two+ files: first -> baseline, second -> revised.
               loadInto('baseline', paths[0]);
               loadInto('revised',  paths[1]);
             }
@@ -149,13 +151,19 @@ export default function App() {
       mounted = false;
       cleanup?.();
     };
-  }, [baseline, revised]);
+  }, [predictedDropTarget]);
 
   async function onExport() {
-    if (!baseline || !revised || !diff) return;
-    setExportStatus('Building merged XER…');
+    if (!baseline || !revised || !diff || isExporting) return;
+    setIsExporting(true);
+    setExportStatus('Re-parsing files…');
     try {
+      // Yield to React so the disabled button + spinner render before the
+      // synchronous parse/merge/serialize work runs.
+      await new Promise(r => setTimeout(r, 0));
       const { xer: merged, stats } = buildMergedXer(baseline.text, revised.text, diff, decisions);
+      setExportStatus('Choose where to save…');
+      await new Promise(r => setTimeout(r, 0));
       const defaultName = revised.fileName.replace(/\.xer$/i, '') + '-merged.xer';
       const written = await saveXer(merged, defaultName);
       if (written) {
@@ -166,6 +174,8 @@ export default function App() {
       }
     } catch (e) {
       setExportStatus(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsExporting(false);
     }
   }
 
@@ -186,6 +196,7 @@ export default function App() {
         onSwap={swap}
         canExport={!!diff}
         onExport={onExport}
+        isExporting={isExporting}
         exportStatus={exportStatus}
         acceptedCount={counts.accepted}
         rejectedCount={counts.rejected}
@@ -232,20 +243,6 @@ export default function App() {
 
 function safeSummarize(loaded: LoadedXer): FileSummary | null {
   try { return summarize(loaded.xer); } catch { return null; }
-}
-
-/** Convert a Tauri PhysicalPosition to logical coords and hit-test for a
- * [data-drop-slot] ancestor. Returns null if not over a slot. */
-function slotAtPoint(position: { x: number; y: number } | undefined): DropTargetSlot | null {
-  if (!position) return null;
-  const scale = window.devicePixelRatio || 1;
-  const x = position.x / scale;
-  const y = position.y / scale;
-  const el = document.elementFromPoint(x, y) as HTMLElement | null;
-  if (!el) return null;
-  const slotEl = el.closest('[data-drop-slot]') as HTMLElement | null;
-  const slot = slotEl?.getAttribute('data-drop-slot');
-  return slot === 'baseline' || slot === 'revised' ? slot : null;
 }
 
 function Tabs({

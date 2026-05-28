@@ -7,6 +7,15 @@ export default {
         sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI Variable"', '"Segoe UI"', 'Inter', 'Roboto', 'sans-serif'],
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
       },
+      keyframes: {
+        'progress-stripe': {
+          '0%':   { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(250%)' }
+        }
+      },
+      animation: {
+        'progress-stripe': 'progress-stripe 1.4s ease-in-out infinite'
+      },
       colors: {
         bg: {
           base: '#0b1220',     // app background
