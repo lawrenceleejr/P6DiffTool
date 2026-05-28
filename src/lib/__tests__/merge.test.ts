@@ -13,13 +13,13 @@ function load() {
 }
 
 function activityKey(diff: ReturnType<typeof diffXer>, code: string): string {
-  const row = diff.activities.rows.find(r => r.key.endsWith(`::${code}`));
+  const row = diff.activities.rows.find(r => r.key === code);
   if (!row) throw new Error(`activity ${code} not found in diff`);
   return row.key;
 }
 
 function relationshipKey(diff: ReturnType<typeof diffXer>, pred: string, succ: string): string {
-  const row = diff.relationships.rows.find(r => r.key.includes(`::${pred}->${succ}`));
+  const row = diff.relationships.rows.find(r => r.key.startsWith(`${pred}->${succ}`));
   if (!row) throw new Error(`relationship ${pred}->${succ} not found in diff`);
   return row.key;
 }

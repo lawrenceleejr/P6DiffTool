@@ -32,7 +32,7 @@ describe('computeThreeWay — classification', () => {
   const r = computeThreeWay(xerA, xerB, xerC);
 
   it('A1015 add (B) vs A1015 add (C) is add-add', () => {
-    const row = findRow(r, 'activities', '::A1015')!;
+    const row = findRow(r, 'activities', 'A1015')!;
     expect(row.status).toBe('conflict');
     expect(row.conflictKind).toBe('add-add');
     expect((row.source as any).name).toBe('Design HVAC');
@@ -40,20 +40,20 @@ describe('computeThreeWay — classification', () => {
   });
 
   it('A2000 modify (B) vs A2000 delete (C) is modify-delete', () => {
-    const row = findRow(r, 'activities', '::A2000')!;
+    const row = findRow(r, 'activities', 'A2000')!;
     expect(row.status).toBe('conflict');
     expect(row.conflictKind).toBe('modify-delete');
   });
 
   it('A2020 delete (B) vs A2020 modify (C) is delete-modify', () => {
-    const row = findRow(r, 'activities', '::A2020')!;
+    const row = findRow(r, 'activities', 'A2020')!;
     expect(row.status).toBe('conflict');
     expect(row.conflictKind).toBe('delete-modify');
     expect((row.target as any).name).toBe('Install Roof (Steel)');
   });
 
   it('A1010 modify (B) vs modify (C) is modify-modify with per-field detail', () => {
-    const row = findRow(r, 'activities', '::A1010')!;
+    const row = findRow(r, 'activities', 'A1010')!;
     expect(row.status).toBe('conflict');
     expect(row.conflictKind).toBe('modify-modify');
     const byField = Object.fromEntries(row.fields.map(f => [f.field, f]));
@@ -66,18 +66,18 @@ describe('computeThreeWay — classification', () => {
   });
 
   it('A3000 modify (B) on a row C did not touch is a clean apply', () => {
-    const row = findRow(r, 'activities', '::A3000')!;
+    const row = findRow(r, 'activities', 'A3000')!;
     expect(row.status).toBe('clean');
     expect(row.fields.every(f => f.status === 'apply' || f.status === 'no-op')).toBe(true);
   });
 
   it('A1010 -> A1020 lag B(0->8), C untouched is clean', () => {
-    const row = findRow(r, 'relationships', '::A1010->A1020')!;
+    const row = findRow(r, 'relationships', 'A1010->A1020')!;
     expect(row.status).toBe('clean');
   });
 
   it('A2010 -> A2020 modify (C) vs delete (B) is delete-modify (B removed it)', () => {
-    const row = findRow(r, 'relationships', '::A2010->A2020')!;
+    const row = findRow(r, 'relationships', 'A2010->A2020')!;
     expect(row.status).toBe('conflict');
     expect(row.conflictKind).toBe('delete-modify');
     expect((row.target as any)?.lagHrs).toBe(16);
@@ -126,10 +126,10 @@ describe('applyThreeWay — resolving conflicts', () => {
   const r = computeThreeWay(xerA, xerB, xerC);
 
   function activityKey(code: string) {
-    return findRow(r, 'activities', `::${code}`)!.key;
+    return findRow(r, 'activities', `${code}`)!.key;
   }
   function relationshipKey(pred: string, succ: string) {
-    return findRow(r, 'relationships', `::${pred}->${succ}`)!.key;
+    return findRow(r, 'relationships', `${pred}->${succ}`)!.key;
   }
 
   it('add-add: take-source replaces C\'s A1015 with B\'s', () => {

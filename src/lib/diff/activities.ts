@@ -38,9 +38,10 @@ function buildMap(xer: XER): Map<string, ActivityRecord> {
   const map = new Map<string, ActivityRecord>();
   for (const task of xer.tasks) {
     const rec = toActivityRecord(xer, task);
-    // Key by (project, activityId) so multi-project XERs diff cleanly.
-    const key = `${rec.projectShortName}::${rec.activityId}`;
-    map.set(key, rec);
+    // Match purely by Activity ID — we deliberately ignore the project
+    // short name so the diff still aligns rows across files that differ
+    // only by project rename / id.
+    map.set(rec.activityId, rec);
   }
   return map;
 }

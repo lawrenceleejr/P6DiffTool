@@ -16,21 +16,21 @@ describe('diffXer — activities', () => {
   const result = diffXer(oldXer, newXer);
 
   it('classifies A1015 (Design HVAC) as added', () => {
-    const row = result.activities.rows.find(r => r.key.endsWith('::A1015'));
+    const row = result.activities.rows.find(r => r.key === 'A1015');
     expect(row).toBeDefined();
     expect(row!.status).toBe('added');
     expect(row!.new?.name).toBe('Design HVAC');
   });
 
   it('classifies A2020 (Install Roof) as removed', () => {
-    const row = result.activities.rows.find(r => r.key.endsWith('::A2020'));
+    const row = result.activities.rows.find(r => r.key === 'A2020');
     expect(row).toBeDefined();
     expect(row!.status).toBe('removed');
     expect(row!.old?.name).toBe('Install Roof');
   });
 
   it('classifies A1010 as modified with a duration change 40 -> 48', () => {
-    const row = result.activities.rows.find(r => r.key.endsWith('::A1010'));
+    const row = result.activities.rows.find(r => r.key === 'A1010');
     expect(row).toBeDefined();
     expect(row!.status).toBe('modified');
     const dur = row!.fields.find(f => f.field === 'originalDurationHrs');
@@ -40,7 +40,7 @@ describe('diffXer — activities', () => {
   });
 
   it('classifies A2000 as modified with a name change and a planned-start shift', () => {
-    const row = result.activities.rows.find(r => r.key.endsWith('::A2000'));
+    const row = result.activities.rows.find(r => r.key === 'A2000');
     expect(row).toBeDefined();
     expect(row!.status).toBe('modified');
     const fields = Object.fromEntries(row!.fields.map(f => [f.field, f]));
@@ -51,7 +51,7 @@ describe('diffXer — activities', () => {
   });
 
   it('classifies A3000 as modified with status going Not Started -> Active', () => {
-    const row = result.activities.rows.find(r => r.key.endsWith('::A3000'));
+    const row = result.activities.rows.find(r => r.key === 'A3000');
     expect(row).toBeDefined();
     expect(row!.status).toBe('modified');
     const status = row!.fields.find(f => f.field === 'status');
@@ -61,7 +61,7 @@ describe('diffXer — activities', () => {
 
   it('classifies untouched activities (A1000, A1020, A2010, A3010) as unchanged', () => {
     for (const code of ['A1000', 'A1020', 'A2010', 'A3010']) {
-      const row = result.activities.rows.find(r => r.key.endsWith(`::${code}`));
+      const row = result.activities.rows.find(r => r.key === code);
       expect(row, `expected ${code} present`).toBeDefined();
       expect(row!.status, `expected ${code} unchanged`).toBe('unchanged');
     }
@@ -80,7 +80,7 @@ describe('diffXer — relationships', () => {
   const result = diffXer(oldXer, newXer);
 
   it('classifies the 8 hr lag added on A1010 -> A1020 as modified', () => {
-    const row = result.relationships.rows.find(r => r.key.includes('::A1010->A1020'));
+    const row = result.relationships.rows.find(r => r.key.startsWith('A1010->A1020'));
     expect(row).toBeDefined();
     expect(row!.status).toBe('modified');
     const lag = row!.fields.find(f => f.field === 'lagHrs');
@@ -89,8 +89,8 @@ describe('diffXer — relationships', () => {
   });
 
   it('classifies A1015 -> A2000 and A2010 -> A3000 as added', () => {
-    const a1015 = result.relationships.rows.find(r => r.key.includes('::A1015->A2000'));
-    const a2010 = result.relationships.rows.find(r => r.key.includes('::A2010->A3000'));
+    const a1015 = result.relationships.rows.find(r => r.key.startsWith('A1015->A2000'));
+    const a2010 = result.relationships.rows.find(r => r.key.startsWith('A2010->A3000'));
     expect(a1015?.status).toBe('added');
     expect(a2010?.status).toBe('added');
   });
@@ -121,6 +121,38 @@ describe('diffXer — project', () => {
     const dd = row!.fields.find(f => f.field === 'dataDate');
     expect(dd?.oldValue).toContain('2026-04-01');
     expect(dd?.newValue).toContain('2026-04-15');
+  });
+});
+
+describe('diffXer — project short name is ignored for matching', () => {
+  const { oldXer } = loadFixtures();
+  const baseText = readFileSync(resolve(__dirname, '../../../..', 'test-data/sample-baseline.xer'), 'utf8');
+  // Rename the project everywhere (PROJECT.proj_short_name and the
+  // PROJWBS root node's wbs_short_name). Everything else is byte-identical.
+  const renamedText = baseText.replace(/\tP1\t/g, '\tP1_RENAMED\t');
+  const renamed = new XER(renamedText);
+  const result = diffXer(oldXer, renamed);
+
+  it('reports zero activity changes despite the project rename', () => {
+    expect(result.activities.counts.added).toBe(0);
+    expect(result.activities.counts.removed).toBe(0);
+    expect(result.activities.counts.modified).toBe(0);
+  });
+
+  it('reports zero relationship changes despite the project rename', () => {
+    expect(result.relationships.counts.added).toBe(0);
+    expect(result.relationships.counts.removed).toBe(0);
+    expect(result.relationships.counts.modified).toBe(0);
+  });
+
+  it('does not include the project-root WBS node in the WBS diff', () => {
+    expect(result.wbs.counts.added).toBe(0);
+    expect(result.wbs.counts.removed).toBe(0);
+    expect(result.wbs.counts.modified).toBe(0);
+    for (const r of result.wbs.rows) {
+      expect((r.new ?? r.old)?.shortName).not.toBe('P1');
+      expect((r.new ?? r.old)?.shortName).not.toBe('P1_RENAMED');
+    }
   });
 });
 

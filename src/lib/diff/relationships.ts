@@ -20,8 +20,9 @@ function buildMap(xer: XER): Map<string, RelationshipRecord> {
       lagHrs: durationHours(tp.lag),
       projectShortName: String(project?.projShortName ?? '')
     };
-    const key = `${rec.projectShortName}::${rec.predecessorId}->${rec.successorId}::${rec.type}`;
-    map.set(key, rec);
+    // Match by (predecessor, successor, type) only — project short name is
+    // ignored so two files that differ in project rename still align logic.
+    map.set(`${rec.predecessorId}->${rec.successorId}::${rec.type}`, rec);
   }
   return map;
 }

@@ -85,20 +85,21 @@ export function buildMergedXer(
 
 function revertActivity(merged: XER, oldXer: XER, row: DiffRow<ActivityRecord>): boolean {
   if (row.status === 'added' && row.new) {
-    const t = findTaskByCode(merged, row.new.projectShortName, row.new.activityId);
+    const t = findTaskByCode(merged, row.new.activityId);
     if (!t) return false;
     return merged.deleteTaskRow(t.taskId);
   }
   if (row.status === 'removed' && row.old) {
-    if (findTaskByCode(merged, row.old.projectShortName, row.old.activityId)) return false;
-    const values = readTaskRow(oldXer, row.old.projectShortName, row.old.activityId);
+    if (findTaskByCode(merged, row.old.activityId)) return false;
+    const values = readTaskRow(oldXer, row.old.activityId);
     if (!values) return false;
     values.task_id = String(nextTaskId(merged));
+    retargetProjId(merged, values);
     merged.insertTaskRow(values);
     return true;
   }
   if (row.status === 'modified' && row.new) {
-    const t = findTaskByCode(merged, row.new.projectShortName, row.new.activityId);
+    const t = findTaskByCode(merged, row.new.activityId);
     if (!t) return false;
     const patch: Record<string, string | number> = {};
     for (const f of row.fields) {
@@ -119,14 +120,15 @@ function revertRelationship(merged: XER, oldXer: XER, row: DiffRow<RelationshipR
   }
   if (row.status === 'removed' && row.old) {
     if (findRelationship(merged, row.old.predecessorId, row.old.successorId, row.old.type)) return false;
-    const succ = findTaskByCode(merged, row.old.projectShortName, row.old.successorId);
-    const pred = findTaskByCode(merged, row.old.projectShortName, row.old.predecessorId);
+    const succ = findTaskByCode(merged, row.old.successorId);
+    const pred = findTaskByCode(merged, row.old.predecessorId);
     if (!succ || !pred) return false;
     const values = readRelationshipRow(oldXer, row.old.predecessorId, row.old.successorId, row.old.type);
     if (!values) return false;
     values.task_pred_id = String(nextRelId(merged));
     values.task_id = String(succ.taskId);
     values.pred_task_id = String(pred.taskId);
+    retargetRelProjId(merged, values);
     merged.insertTaskPredecessorRow(values);
     return true;
   }
@@ -146,10 +148,8 @@ function revertRelationship(merged: XER, oldXer: XER, row: DiffRow<RelationshipR
 
 // ---- Lookups ----------------------------------------------------------------
 
-function findTaskByCode(xer: XER, projectShortName: string, taskCode: string): any | undefined {
-  for (const t of xer.tasks) {
-    if (t.taskCode === taskCode && (t.project as any)?.projShortName === projectShortName) return t;
-  }
+function findTaskByCode(xer: XER, taskCode: string): any | undefined {
+  for (const t of xer.tasks) if (t.taskCode === taskCode) return t;
   return undefined;
 }
 
@@ -162,10 +162,24 @@ function findRelationship(xer: XER, predCode: string, succCode: string, type: st
   return undefined;
 }
 
-function readTaskRow(xer: XER, projectShortName: string, taskCode: string): Record<string, string> | undefined {
-  const t = findTaskByCode(xer, projectShortName, taskCode);
+function readTaskRow(xer: XER, taskCode: string): Record<string, string> | undefined {
+  const t = findTaskByCode(xer, taskCode);
   if (!t) return undefined;
   return readRawRowById(xer, 'TASK', 'task_id', t.taskId);
+}
+
+/** Override the proj_id on a row being inserted so the new row belongs to
+ * the merged file's project, not the source file's. */
+function retargetProjId(merged: XER, values: Record<string, string>) {
+  if (merged.projects.length === 0) return;
+  values.proj_id = String(merged.projects[0].projId);
+}
+
+function retargetRelProjId(merged: XER, values: Record<string, string>) {
+  if (merged.projects.length === 0) return;
+  const projId = String(merged.projects[0].projId);
+  values.proj_id = projId;
+  values.pred_proj_id = projId;
 }
 
 function readRelationshipRow(xer: XER, predCode: string, succCode: string, type: string): Record<string, string> | undefined {

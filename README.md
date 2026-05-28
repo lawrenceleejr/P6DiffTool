@@ -37,12 +37,17 @@ that gap, in a single small desktop app.
 
   | Category | Source | Match key | Compared fields |
   |---|---|---|---|
-  | Activities | `TASK` | `task_code` (Activity ID) + project | name, type, status, % complete, original / remaining duration, planned + actual start/finish, total + free float, constraint, calendar, WBS path |
-  | Logic | `TASKPRED` | (pred, succ, type) | lag |
-  | WBS | `PROJWBS` | WBS path | name, short name |
+  | Activities | `TASK` | `task_code` (Activity ID) | name, type, status, % complete, original / remaining duration, planned + actual start/finish, total + free float, constraint, calendar, WBS path |
+  | Logic | `TASKPRED` | (predecessor, successor, type) — both as `task_code` | lag |
+  | WBS | `PROJWBS` | WBS path **excluding the project root** | name, short name |
   | Resources | `RSRC` | `rsrc_short_name` | name, type, calendar |
   | Calendars | `CALENDAR` | `clndr_name` | type, default, hours/day |
   | Project | `PROJECT` | `proj_short_name` | data date, planned start, planned finish |
+
+  The project short name is deliberately **not** part of any match key —
+  comparing a schedule that's been renamed (e.g. `P1` → `P1_REV2`) still
+  aligns activity / logic / WBS rows correctly. The project itself is
+  diffed as a single row in the Overview / project summary.
 
 ### Project status dashboard
 

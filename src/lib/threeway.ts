@@ -224,7 +224,7 @@ function keyedActivities(xerC: XER): Map<string, ActivityRecord> {
   const m = new Map<string, ActivityRecord>();
   for (const t of xerC.tasks) {
     const rec = toActivityRecord(xerC, t);
-    m.set(`${rec.projectShortName}::${rec.activityId}`, rec);
+    m.set(rec.activityId, rec);
   }
   return m;
 }
@@ -243,7 +243,7 @@ function keyedRelationships(xerC: XER): Map<string, RelationshipRecord> {
       lagHrs:        durationHours((tp as any).lag),
       projectShortName: String(project?.projShortName ?? '')
     };
-    m.set(`${rec.projectShortName}::${rec.predecessorId}->${rec.successorId}::${rec.type}`, rec);
+    m.set(`${rec.predecessorId}->${rec.successorId}::${rec.type}`, rec);
   }
   return m;
 }
@@ -320,11 +320,11 @@ function applyActivityRow(
       return insertTaskFrom(merged, xerB, row.source) ? 'applied' : 'skipped';
     }
     if (row.changeFromBase === 'removed' && row.base) {
-      const t = findTaskByCode(merged, row.base.projectShortName, row.base.activityId);
+      const t = findTaskByCode(merged, row.base.activityId);
       return t && merged.deleteTaskRow(t.taskId) ? 'applied' : 'skipped';
     }
     if (row.changeFromBase === 'modified' && row.source) {
-      const t = findTaskByCode(merged, row.source.projectShortName, row.source.activityId);
+      const t = findTaskByCode(merged, row.source.activityId);
       if (!t) return 'skipped';
       const patch: Record<string, string | number> = {};
       for (const f of row.fields) {
@@ -343,7 +343,7 @@ function applyActivityRow(
   if (row.conflictKind === 'add-add') {
     if (rowRes === 'take-source' && row.source) {
       // delete C's add then insert B's row.
-      const existing = findTaskByCode(merged, row.source.projectShortName, row.source.activityId);
+      const existing = findTaskByCode(merged, row.source.activityId);
       if (existing) merged.deleteTaskRow(existing.taskId);
       return insertTaskFrom(merged, xerB, row.source) ? 'applied' : 'skipped';
     }
@@ -363,7 +363,7 @@ function applyActivityRow(
   if (row.conflictKind === 'delete-modify') {
     // B deleted, C modified. take-source = delete from C anyway.
     if (rowRes === 'take-source' && row.target) {
-      const t = findTaskByCode(merged, row.target.projectShortName, row.target.activityId);
+      const t = findTaskByCode(merged, row.target.activityId);
       return t && merged.deleteTaskRow(t.taskId) ? 'applied' : 'skipped';
     }
     if (rowRes === 'keep-target') return 'skipped';
@@ -372,7 +372,7 @@ function applyActivityRow(
 
   if (row.conflictKind === 'modify-modify' && row.source) {
     // Apply per-field resolutions + auto-apply 'apply' fields.
-    const t = findTaskByCode(merged, row.source.projectShortName, row.source.activityId);
+    const t = findTaskByCode(merged, row.source.activityId);
     if (!t) return 'unresolved';
     const patch: Record<string, string | number> = {};
     let anyUnresolved = false;
@@ -494,11 +494,15 @@ function applyRelationshipRow(
 // ---- Raw-row helpers (insert from B / A into merged) -----------------------
 
 function insertTaskFrom(merged: XER, sourceXer: XER, rec: ActivityRecord): boolean {
-  const t = findTaskByCode(sourceXer, rec.projectShortName, rec.activityId);
+  const t = findTaskByCode(sourceXer, rec.activityId);
   if (!t) return false;
   const values = readRow(sourceXer, 'TASK', 'task_id', t.taskId);
   if (!values) return false;
   values.task_id = String(nextTaskId(merged));
+  // Re-target proj_id to merged's project — source and target may have
+  // different internal IDs for the same logical project (we deliberately
+  // ignore project name for matching).
+  if (merged.projects.length > 0) values.proj_id = String(merged.projects[0].projId);
   merged.insertTaskRow(values);
   return true;
 }
@@ -506,22 +510,25 @@ function insertTaskFrom(merged: XER, sourceXer: XER, rec: ActivityRecord): boole
 function insertRelFrom(merged: XER, sourceXer: XER, rec: RelationshipRecord): boolean {
   const tp = findRel(sourceXer, rec.predecessorId, rec.successorId, rec.type);
   if (!tp) return false;
-  const succ = findTaskByCode(merged, rec.projectShortName, rec.successorId);
-  const pred = findTaskByCode(merged, rec.projectShortName, rec.predecessorId);
+  const succ = findTaskByCode(merged, rec.successorId);
+  const pred = findTaskByCode(merged, rec.predecessorId);
   if (!succ || !pred) return false;
   const values = readRow(sourceXer, 'TASKPRED', 'task_pred_id', tp.taskPredId);
   if (!values) return false;
   values.task_pred_id = String(nextRelId(merged));
   values.task_id      = String(succ.taskId);
   values.pred_task_id = String(pred.taskId);
+  if (merged.projects.length > 0) {
+    const projId = String(merged.projects[0].projId);
+    values.proj_id      = projId;
+    values.pred_proj_id = projId;
+  }
   merged.insertTaskPredecessorRow(values);
   return true;
 }
 
-function findTaskByCode(xer: XER, projectShortName: string, taskCode: string): any | undefined {
-  for (const t of xer.tasks) {
-    if (t.taskCode === taskCode && (t.project as any)?.projShortName === projectShortName) return t;
-  }
+function findTaskByCode(xer: XER, taskCode: string): any | undefined {
+  for (const t of xer.tasks) if (t.taskCode === taskCode) return t;
   return undefined;
 }
 

@@ -7,8 +7,10 @@ import {
 
 const pathCache = new WeakMap<XER, Map<number, string>>();
 
-/** Resolve the full WBS path ("Project / Phase / Task") for a wbsId, with
- * memoization per XER instance. */
+/** Resolve the full WBS path ("Phase / Task") for a wbsId, with memoization
+ * per XER instance. The project-root WBS node (whose name is the project
+ * short name) is deliberately omitted from the path so the diff aligns
+ * rows across files that differ only in project rename / id. */
 export function wbsPathForId(xer: XER, wbsId: number): string {
   let cache = pathCache.get(xer);
   if (!cache) {
@@ -26,7 +28,11 @@ export function wbsPathForId(xer: XER, wbsId: number): string {
   const seen = new Set<number>();
   while (current && !seen.has(current.wbsId)) {
     seen.add(current.wbsId);
-    parts.unshift(String(current.wbsShortName ?? current.wbsName ?? current.wbsId));
+    // Skip the project-root WBS node — its name is the project short name,
+    // which we ignore for matching.
+    if (!current.projNodeFlag) {
+      parts.unshift(String(current.wbsShortName ?? current.wbsName ?? current.wbsId));
+    }
     if (current.parentWbsId == null) break;
     current = byId.get(current.parentWbsId);
   }
@@ -38,15 +44,19 @@ export function wbsPathForId(xer: XER, wbsId: number): string {
 function buildMap(xer: XER): Map<string, WbsRecord> {
   const map = new Map<string, WbsRecord>();
   for (const w of xer.projWBS) {
+    // Skip the project-root node entirely — we don't diff the project name.
+    if ((w as any).projNodeFlag) continue;
     const project = (w as any).project;
     const path = wbsPathForId(xer, w.wbsId);
+    if (!path) continue;
     const rec: WbsRecord = {
       path,
       shortName: String(w.wbsShortName ?? ''),
       name: String(w.wbsName ?? ''),
       projectShortName: String(project?.projShortName ?? '')
     };
-    map.set(`${rec.projectShortName}::${path}`, rec);
+    // Key purely by path; no project prefix.
+    map.set(path, rec);
   }
   return map;
 }
