@@ -63,7 +63,8 @@ export function applyBranchToTrunk(
   trunkText: string,
   branchText: string,
   diff: DiffResult,
-  decisions: DecisionState
+  decisions: DecisionState,
+  operator: string = ''
 ): { xer: XER; stats: MergeStats } {
   const merged    = new XER(trunkText);    // start from trunk
   const branchXer = new XER(branchText);
@@ -77,7 +78,7 @@ export function applyBranchToTrunk(
     stats.activities.total += 1;
     const decision = decisions.activities.get(row.key) ?? defaultDecision(row.status);
     if (decision === 'skip') { stats.activities.skipped += 1; continue; }
-    if (applyActivity(merged, branchXer, row)) stats.activities.applied += 1;
+    if (applyActivity(merged, branchXer, row, operator)) stats.activities.applied += 1;
     else stats.activities.skipped += 1;
   }
 
@@ -94,10 +95,10 @@ export function applyBranchToTrunk(
   return { xer: merged, stats };
 }
 
-function applyActivity(merged: XER, branchXer: XER, row: DiffRow<ActivityRecord>): boolean {
+function applyActivity(merged: XER, branchXer: XER, row: DiffRow<ActivityRecord>, operator: string): boolean {
   if (row.status === 'added' && row.new) {
     if (findTaskByCode(merged, row.new.activityId)) return false;
-    return insertTaskFromBranch(merged, branchXer, row.new);
+    return insertTaskFromBranch(merged, branchXer, row.new, operator);
   }
   if (row.status === 'removed' && row.old) {
     const t = findTaskByCode(merged, row.old.activityId);
@@ -112,7 +113,9 @@ function applyActivity(merged: XER, branchXer: XER, row: DiffRow<ActivityRecord>
       if (col) patch[col] = formatXerValue(f.newValue);
     }
     if (Object.keys(patch).length === 0) return false;
-    stampTaskUpdate(patch);
+    const branchTask = findTaskByCode(branchXer, row.new.activityId);
+    const author = branchTask?.updateUser as string | undefined;
+    stampTaskUpdate(patch, author, operator);
     return merged.updateTaskRow(t.taskId, patch);
   }
   return false;
@@ -142,14 +145,16 @@ function applyRelationship(merged: XER, branchXer: XER, row: DiffRow<Relationshi
 
 // ---- Insert helpers (copy raw row from branch, remap ids) ------------------
 
-function insertTaskFromBranch(merged: XER, branchXer: XER, rec: ActivityRecord): boolean {
+function insertTaskFromBranch(merged: XER, branchXer: XER, rec: ActivityRecord, operator: string): boolean {
   const t = findTaskByCode(branchXer, rec.activityId);
   if (!t) return false;
   const values = readRow(branchXer, 'TASK', 'task_id', t.taskId);
   if (!values) return false;
   values.task_id = String(nextTaskId(merged));
   retargetProjId(merged, values);
-  stampTaskInsert(values);
+  // values.update_user at this point is the branch's value -> that's the
+  // author we want stampTaskInsert to preserve into the new combined stamp.
+  stampTaskInsert(values, operator);
   merged.insertTaskRow(values);
   return true;
 }

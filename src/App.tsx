@@ -19,6 +19,7 @@ import {
   computeThreeWay, applyThreeWay, emptyResolutions, unresolvedCount,
   type ResolutionState, type RowResolution, type FieldResolution, type ThreeWayResult
 } from './lib/threeway';
+import { getOsUsername } from './lib/operator';
 
 type Tab = 'overview' | 'activities' | 'relationships' | 'wbs' | 'resources' | 'calendars' | 'conflicts';
 type Category = 'activities' | 'relationships';
@@ -43,6 +44,10 @@ export default function App() {
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [activeDropTarget, setActiveDropTarget] = useState<DropTargetSlot | null>(null);
+  // "Operator" — stamped into each merged TASK row's update_user alongside
+  // the original editor's name. Defaults to the OS user, freely editable.
+  const [operator, setOperator] = useState('');
+  useEffect(() => { getOsUsername().then(u => setOperator(prev => prev || u)); }, []);
 
   const trunkSummary:  FileSummary | null = useMemo(() => (trunk  ? safeSummarize(trunk)  : null), [trunk]);
   const branchSummary: FileSummary | null = useMemo(() => (branch ? safeSummarize(branch) : null), [branch]);
@@ -300,7 +305,7 @@ export default function App() {
     setExportStatus('Applying branch changes to trunk…');
     try {
       await new Promise(r => setTimeout(r, 0));
-      const { xer: merged, stats } = applyBranchToTrunk(trunk.text, branch.text, diff, decisions);
+      const { xer: merged, stats } = applyBranchToTrunk(trunk.text, branch.text, diff, decisions, operator);
       setExportStatus('Choose where to save…');
       await new Promise(r => setTimeout(r, 0));
       const defaultName = trunk.fileName.replace(/\.xer$/i, '') + '-updated.xer';
@@ -325,7 +330,7 @@ export default function App() {
     try {
       await new Promise(r => setTimeout(r, 0));
       const { xer: merged, stats } = applyThreeWay(
-        branchBase.text, branch.text, trunk.text, threeWay, resolutions
+        branchBase.text, branch.text, trunk.text, threeWay, resolutions, operator
       );
       setExportStatus('Choose where to save…');
       await new Promise(r => setTimeout(r, 0));
@@ -378,6 +383,8 @@ export default function App() {
         exportStatus={exportStatus}
         exportSummary={exportSummary}
         activeDropTarget={activeDropTarget}
+        operator={operator}
+        onOperatorChange={setOperator}
       />
       <Tabs
         tab={tab} setTab={setTab}

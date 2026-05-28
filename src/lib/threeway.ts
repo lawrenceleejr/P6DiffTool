@@ -284,7 +284,8 @@ export function applyThreeWay(
   sourceText: string,
   targetText: string,
   threeWay: ThreeWayResult,
-  resolutions: ResolutionState
+  resolutions: ResolutionState,
+  operator: string = ''
 ): { xer: XER; stats: ApplyStats } {
   const merged = new XER(targetText);     // start from C
   const xerA = new XER(baseText);
@@ -295,7 +296,8 @@ export function applyThreeWay(
     const r = applyActivityRow(merged, xerA, xerB, row,
       resolutions.activityRows.get(row.key),
       resolutions.activityFields.get(row.key) ?? new Map(),
-      resolutions.activitySkipClean.has(row.key));
+      resolutions.activitySkipClean.has(row.key),
+      operator);
     bump(stats, r);
   }
   for (const row of threeWay.relationships.rows) {
@@ -321,7 +323,8 @@ function applyActivityRow(
   row: ThreeWayRow<ActivityRecord>,
   rowRes: RowResolution | undefined,
   fieldRes: Map<string, FieldResolution>,
-  skipClean: boolean
+  skipClean: boolean,
+  operator: string
 ): 'applied' | 'skipped' | 'unresolved' {
   if (row.status === 'no-op') return 'skipped';
 
@@ -329,7 +332,7 @@ function applyActivityRow(
   if (row.status === 'clean') {
     if (skipClean) return 'skipped';
     if (row.changeFromBase === 'added' && row.source) {
-      return insertTaskFrom(merged, xerB, row.source) ? 'applied' : 'skipped';
+      return insertTaskFrom(merged, xerB, row.source, operator) ? 'applied' : 'skipped';
     }
     if (row.changeFromBase === 'removed' && row.base) {
       const t = findTaskByCode(merged, row.base.activityId);
@@ -346,7 +349,7 @@ function applyActivityRow(
         }
       }
       if (Object.keys(patch).length === 0) return 'skipped';
-      stampTaskUpdate(patch);
+      stampTaskUpdate(patch, authorFromBranch(xerB, row.source.activityId), operator);
       return merged.updateTaskRow(t.taskId, patch) ? 'applied' : 'skipped';
     }
     return 'skipped';
@@ -358,7 +361,7 @@ function applyActivityRow(
       // delete C's add then insert B's row.
       const existing = findTaskByCode(merged, row.source.activityId);
       if (existing) merged.deleteTaskRow(existing.taskId);
-      return insertTaskFrom(merged, xerB, row.source) ? 'applied' : 'skipped';
+      return insertTaskFrom(merged, xerB, row.source, operator) ? 'applied' : 'skipped';
     }
     if (rowRes === 'keep-target') return 'skipped';
     return 'unresolved';
@@ -367,7 +370,7 @@ function applyActivityRow(
   if (row.conflictKind === 'modify-delete') {
     // B modified, C deleted. take-source = re-insert from B with B's values.
     if (rowRes === 'take-source' && row.source) {
-      return insertTaskFrom(merged, xerB, row.source) ? 'applied' : 'skipped';
+      return insertTaskFrom(merged, xerB, row.source, operator) ? 'applied' : 'skipped';
     }
     if (rowRes === 'keep-target') return 'skipped';
     return 'unresolved';
@@ -410,7 +413,7 @@ function applyActivityRow(
     // `unresolved` status / unresolvedCount gates export at the UI layer.
     let didUpdate = false;
     if (Object.keys(patch).length > 0) {
-      stampTaskUpdate(patch);
+      stampTaskUpdate(patch, authorFromBranch(xerB, row.source.activityId), operator);
       didUpdate = merged.updateTaskRow(t.taskId, patch);
     }
     if (anyUnresolved) return 'unresolved';
@@ -418,6 +421,11 @@ function applyActivityRow(
   }
 
   return 'skipped';
+}
+
+function authorFromBranch(xerB: XER, activityId: string): string | undefined {
+  const t = findTaskByCode(xerB, activityId);
+  return (t as any)?.updateUser as string | undefined;
 }
 
 function applyRelationshipRow(
@@ -509,7 +517,7 @@ function applyRelationshipRow(
 
 // ---- Raw-row helpers (insert from B / A into merged) -----------------------
 
-function insertTaskFrom(merged: XER, sourceXer: XER, rec: ActivityRecord): boolean {
+function insertTaskFrom(merged: XER, sourceXer: XER, rec: ActivityRecord, operator: string): boolean {
   const t = findTaskByCode(sourceXer, rec.activityId);
   if (!t) return false;
   const values = readRow(sourceXer, 'TASK', 'task_id', t.taskId);
@@ -519,7 +527,9 @@ function insertTaskFrom(merged: XER, sourceXer: XER, rec: ActivityRecord): boole
   // different internal IDs for the same logical project (we deliberately
   // ignore project name for matching).
   if (merged.projects.length > 0) values.proj_id = String(merged.projects[0].projId);
-  stampTaskInsert(values);
+  // values.update_user at this point is the branch's value -> taken as the
+  // author by stampTaskInsert.
+  stampTaskInsert(values, operator);
   merged.insertTaskRow(values);
   return true;
 }

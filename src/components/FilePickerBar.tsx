@@ -24,12 +24,18 @@ interface Props {
   exportStatus: string | null;
   exportSummary: ExportSummary;
   activeDropTarget: DropTargetSlot | null;
+  /** "Operator" — appended to every merged row's update_user (along with the
+   * original editor's name) so the merged trunk's audit trail records who
+   * ran the merge. Defaults to the OS user. */
+  operator: string;
+  onOperatorChange: (v: string) => void;
 }
 
 export function FilePickerBar({
   trunk, branch, branchBase,
   onTrunkChange, onBranchChange, onBranchBaseChange, onSwap,
-  canExport, onExport, isExporting, exportStatus, exportSummary, activeDropTarget
+  canExport, onExport, isExporting, exportStatus, exportSummary, activeDropTarget,
+  operator, onOperatorChange
 }: Props) {
   const tw = exportSummary.threeWay;
   const exportDisabled = isExporting || !!(tw && tw.unresolved > 0);
@@ -81,6 +87,17 @@ export function FilePickerBar({
           <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: '#10b981' }}></span>Added</span>
           <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: '#ef4444' }}></span>Removed</span>
           <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: '#f59e0b' }}></span>Modified</span>
+          <span className="mx-1 h-4 w-px bg-line-strong" />
+          <label className="inline-flex items-center gap-1.5" title="Stamped into each merged row's update_user (alongside the original editor's name) so the audit trail records who ran the merge. Defaults to your OS user.">
+            <span className="text-ink-400">Operator:</span>
+            <input
+              type="text"
+              value={operator}
+              onChange={e => onOperatorChange(e.target.value)}
+              placeholder="initials"
+              className="px-2 py-1 text-xs font-mono rounded border border-line bg-bg-base text-ink-100 placeholder:text-ink-500 w-28 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/40"
+            />
+          </label>
           {canExport && (
             <>
               <span className="mx-1 h-4 w-px bg-line-strong" />

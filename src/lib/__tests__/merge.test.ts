@@ -7,6 +7,7 @@ import {
   applyBranchToTrunk, emptyDecisions, defaultDecision, decisionCounts,
   type DecisionState
 } from '../merge';
+import { formatUpdateUser } from '../xer-stamp';
 
 // In the 2-way model:
 //   trunk  (this file is treated as the source of truth - output starts from it)
@@ -196,19 +197,71 @@ describe('applyBranchToTrunk — TASK update_date is bumped', () => {
     expect(mergedUpd).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   });
 
-  it("an inserted activity's create_date and update_date are both set", () => {
-    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
+  it("an inserted activity's create_date / update_date are bumped and create_user is preserved", () => {
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions(), 'lleejr');
     const tbl = merged.tables.find(t => t.name === 'TASK')!;
-    const idIdx  = tbl.header.indexOf('task_id');
     const codeIdx = tbl.header.indexOf('task_code');
     const updIdx = tbl.header.indexOf('update_date');
     const crtIdx = tbl.header.indexOf('create_date');
     const updUserIdx = tbl.header.indexOf('update_user');
+    const crtUserIdx = tbl.header.indexOf('create_user');
     const a1015Row = tbl.rows.find(r => r[codeIdx] === 'A1015');
     expect(a1015Row).toBeDefined();
     expect(a1015Row![updIdx]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
     expect(a1015Row![crtIdx]).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
-    expect(a1015Row![updUserIdx]).toBe('p6difftool');
-    void idIdx;
+    // update_user combines branch's author ("admin", from the fixture) with
+    // the operator + tool tag; create_user is preserved unchanged.
+    expect(a1015Row![updUserIdx]).toBe('admin | lleejr@p6difftool');
+    expect(a1015Row![crtUserIdx]).toBe('admin');
+  });
+});
+
+describe('formatUpdateUser — author + operator + tool tag', () => {
+  it('both present', () => {
+    expect(formatUpdateUser('jdoe', 'lleejr')).toBe('jdoe | lleejr@p6difftool');
+  });
+  it('author only', () => {
+    expect(formatUpdateUser('jdoe', '')).toBe('jdoe | p6difftool');
+    expect(formatUpdateUser('jdoe', undefined)).toBe('jdoe | p6difftool');
+  });
+  it('operator only', () => {
+    expect(formatUpdateUser('', 'lleejr')).toBe('lleejr@p6difftool');
+    expect(formatUpdateUser(undefined, 'lleejr')).toBe('lleejr@p6difftool');
+  });
+  it('neither', () => {
+    expect(formatUpdateUser('', '')).toBe('p6difftool');
+    expect(formatUpdateUser(undefined, undefined)).toBe('p6difftool');
+  });
+  it('trims whitespace on both sides', () => {
+    expect(formatUpdateUser('  jdoe  ', '  lleejr  ')).toBe('jdoe | lleejr@p6difftool');
+  });
+});
+
+describe('applyBranchToTrunk — composed update_user stamp', () => {
+  const { trunkText, branchText, trunk, branch } = load();
+  const diff = diffXer(trunk, branch);
+
+  function rawTaskField(xer: XER, taskCode: string, col: string): string | undefined {
+    const t = [...xer.tasks].find(x => x.taskCode === taskCode);
+    if (!t) return undefined;
+    const tbl = xer.tables.find(tt => tt.name === 'TASK');
+    if (!tbl) return undefined;
+    const idIdx = tbl.header.indexOf('task_id');
+    const idx = tbl.header.indexOf(col);
+    if (idIdx < 0 || idx < 0) return undefined;
+    const row = tbl.rows.find(r => r[idIdx] === String(t.taskId));
+    return row?.[idx];
+  }
+
+  it("a modified activity's update_user becomes '<branch author> | <operator>@p6difftool'", () => {
+    const branchAuthor = rawTaskField(branch, 'A1010', 'update_user');
+    expect(branchAuthor).toBeTruthy();   // 'admin' from the fixture
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions(), 'lleejr');
+    expect(rawTaskField(merged, 'A1010', 'update_user')).toBe(`${branchAuthor} | lleejr@p6difftool`);
+  });
+
+  it('with empty operator the stamp falls back to "<author> | p6difftool"', () => {
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions(), '');
+    expect(rawTaskField(merged, 'A1010', 'update_user')).toBe('admin | p6difftool');
   });
 });

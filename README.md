@@ -116,6 +116,25 @@ column order, and remaps internal `proj_id` / `task_id` / `pred_task_id`
 references so the merged trunk is self-consistent even when the source
 files used different internal IDs for the same logical project.
 
+#### Audit trail in `update_user`
+
+Every TASK row the merge engine writes (modified *or* inserted) gets its
+`update_user` rewritten to a composed audit stamp:
+
+```
+{original editor} | {operator}@p6difftool
+```
+
+`original editor` is the value already on the branch row (the person who
+actually made the change), `operator` is a free-text field in the top
+bar that defaults to the OS user — change it to whatever you want
+recorded. `create_user` on inserted rows is **preserved unchanged** so
+the activity's original creator stays on record. `update_date` is also
+bumped to "now" on every mutation, which is what makes P6 actually pick
+up the change on import (P6 uses `update_date` to decide whether a row
+needs re-applying — if we leave it at the value already in the trunk it
+silently skips our edits).
+
 ### UI
 
 - Dark, modern theme tuned for long reading sessions; cyan accent on
