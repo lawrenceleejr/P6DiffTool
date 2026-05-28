@@ -49,6 +49,10 @@ export interface ActivityRecord {
   constraintDate?: string;     // TASK.cstr_date
   calendarName?: string;       // joined from CALENDAR.clndr_name
   wbsPath?: string;            // joined PROJWBS path
+  // Informational only — not part of the diff comparison, but surfaced in
+  // the expanded row so users can see when P6 last touched the activity.
+  updateDate?: string;         // TASK.update_date
+  updateUser?: string;         // TASK.update_user
 }
 
 export interface RelationshipRecord {

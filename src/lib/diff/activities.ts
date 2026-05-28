@@ -30,7 +30,9 @@ export function toActivityRecord(xer: XER, task: any): ActivityRecord {
     constraintType: str(task.cstrType),
     constraintDate: dateStr(task.cstrDate),
     calendarName: str(calendar?.clndrName),
-    wbsPath: wbs ? wbsPathForId(xer, wbs.wbsId) : undefined
+    wbsPath: wbs ? wbsPathForId(xer, wbs.wbsId) : undefined,
+    updateDate: dateStr(task.updateDate),
+    updateUser: str(task.updateUser)
   };
 }
 

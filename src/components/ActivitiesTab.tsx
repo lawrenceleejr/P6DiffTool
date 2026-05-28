@@ -1,4 +1,4 @@
-import { DiffTable, type DiffColumn } from './DiffTable';
+import { DiffTable, type DiffColumn, type InfoRow } from './DiffTable';
 import type { ActivityRecord, CategoryDiff, DiffRow } from '../lib/diff';
 import type { Decision } from '../lib/merge';
 
@@ -29,6 +29,17 @@ function formatStatus(s?: string): string | undefined {
   }
 }
 
+// Extra rows shown under the field-diff table on a modified activity, so
+// users can verify that mutations have correctly bumped TASK.update_date
+// (which P6 uses to decide whether to apply changes on import).
+function infoRowsFor(row: DiffRow<ActivityRecord>): InfoRow[] {
+  if (!row.old && !row.new) return [];
+  return [
+    { label: 'update_date', oldValue: row.old?.updateDate, newValue: row.new?.updateDate },
+    { label: 'update_user', oldValue: row.old?.updateUser, newValue: row.new?.updateUser }
+  ];
+}
+
 export function ActivitiesTab({
   diff, decisions, onToggleDecision, onBulkSetDecisions
 }: {
@@ -45,6 +56,7 @@ export function ActivitiesTab({
       decisions={decisions}
       onToggleDecision={onToggleDecision}
       onBulkSetDecisions={onBulkSetDecisions}
+      infoRowsFor={infoRowsFor}
     />
   );
 }

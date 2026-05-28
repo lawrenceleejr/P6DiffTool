@@ -15,6 +15,14 @@ export interface DiffColumn<T> {
   sortable?: boolean;
 }
 
+/** Extra rows appended to the expanded panel as informational context
+ * (e.g. an activity's update_date / update_user). Not part of the diff. */
+export interface InfoRow {
+  label: string;
+  oldValue: unknown;
+  newValue: unknown;
+}
+
 interface Props<T> {
   diff: CategoryDiff<T>;
   columns: DiffColumn<T>[];
@@ -22,6 +30,9 @@ interface Props<T> {
   decisions?: Map<string, Decision>;
   onToggleDecision?: (key: string) => void;
   onBulkSetDecisions?: (keys: string[], decision: Decision) => void;
+  /** Optional callback returning extra context rows to show under the
+   * field-diff table when a modified row is expanded. */
+  infoRowsFor?: (row: DiffRow<T>) => InfoRow[];
 }
 
 type FilterMode = 'all' | 'changes-only' | ChangeStatus;
@@ -32,7 +43,7 @@ const EXPANDED_EXTRA = 30;
 const MIN_COL_WIDTH = 60;
 
 export function DiffTable<T>({
-  diff, columns, emptyMessage = 'No rows.', decisions, onToggleDecision, onBulkSetDecisions
+  diff, columns, emptyMessage = 'No rows.', decisions, onToggleDecision, onBulkSetDecisions, infoRowsFor
 }: Props<T>) {
   const [filter, setFilter] = useState<FilterMode>('changes-only');
   const [query, setQuery] = useState('');
@@ -202,6 +213,7 @@ export function DiffTable<T>({
                     decision={showDecision ? (decisions!.get(row.key) ?? 'apply') : undefined}
                     onToggleDecision={showDecision ? () => onToggleDecision!(row.key) : undefined}
                     decisionWidth={showDecision ? DECISION_WIDTH : 0}
+                    infoRows={infoRowsFor ? infoRowsFor(row) : []}
                   />
                 </div>
               );
@@ -346,7 +358,7 @@ function Header<T>({
 }
 
 function Row<T>({
-  row, columns, colWidth, expanded, onToggle, decision, onToggleDecision, decisionWidth
+  row, columns, colWidth, expanded, onToggle, decision, onToggleDecision, decisionWidth, infoRows
 }: {
   row: DiffRow<T>;
   columns: DiffColumn<T>[];
@@ -356,6 +368,7 @@ function Row<T>({
   decision?: Decision;
   onToggleDecision?: () => void;
   decisionWidth: number;
+  infoRows: InfoRow[];
 }) {
   const cls = `row-${row.status}`;
   const showDecisionCell = decision !== undefined && row.status !== 'unchanged';
@@ -401,22 +414,36 @@ function Row<T>({
           );
         })}
       </div>
-      {expanded && row.fields.length > 0 && (
+      {expanded && (row.fields.length > 0 || infoRows.length > 0) && (
         <div className="mr-3 mb-2 mt-1 border border-line rounded-md bg-bg-raised" style={{ marginLeft: 28 + decisionWidth }}>
           <table className="w-full text-xs">
             <thead>
               <tr className="text-ink-400 bg-bg-surface">
                 <th className="text-left px-3 py-1.5 w-1/4">Field</th>
-                <th className="text-left px-3 py-1.5 w-3/8 text-red-300">Baseline</th>
-                <th className="text-left px-3 py-1.5 w-3/8 text-emerald-300">Revised</th>
+                <th className="text-left px-3 py-1.5 w-3/8 text-red-300">Trunk</th>
+                <th className="text-left px-3 py-1.5 w-3/8 text-emerald-300">Branch</th>
               </tr>
             </thead>
             <tbody>
               {row.fields.map(f => (
-                <tr key={f.field} className="border-t border-line">
+                <tr key={`f-${f.field}`} className="border-t border-line">
                   <td className="px-3 py-1.5 text-ink-300">{f.label}</td>
                   <td className="px-3 py-1.5 font-mono text-ink-200 line-through opacity-70">{formatValue(f.oldValue)}</td>
                   <td className="px-3 py-1.5 font-mono text-ink-50 font-semibold">{formatValue(f.newValue)}</td>
+                </tr>
+              ))}
+              {infoRows.length > 0 && (
+                <tr className="border-t border-line">
+                  <td colSpan={3} className="px-3 pt-2 pb-0.5 text-[10px] uppercase tracking-wider text-ink-500 font-semibold">
+                    Metadata
+                  </td>
+                </tr>
+              )}
+              {infoRows.map((r, i) => (
+                <tr key={`i-${i}-${r.label}`} className="border-t border-line/50">
+                  <td className="px-3 py-1.5 text-ink-400 italic">{r.label}</td>
+                  <td className="px-3 py-1.5 font-mono text-ink-300">{formatValue(r.oldValue)}</td>
+                  <td className="px-3 py-1.5 font-mono text-ink-300">{formatValue(r.newValue)}</td>
                 </tr>
               ))}
             </tbody>
