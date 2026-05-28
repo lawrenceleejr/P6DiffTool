@@ -1,0 +1,22 @@
+# Frontend
+node_modules/
+dist/
+dist-dmg/
+*.tsbuildinfo
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Logs
+*.log
+npm-debug.log*

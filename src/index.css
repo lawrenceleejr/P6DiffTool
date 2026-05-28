@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  scrollbar-gutter: stable;
+}
+
+/* Status tints — solid colors render identically on WebKitGTK/WKWebView/WebView2. */
+.row-added    { background-color: theme('colors.added.50');    border-left: 4px solid theme('colors.added.500'); }
+.row-removed  { background-color: theme('colors.removed.50');  border-left: 4px solid theme('colors.removed.500'); }
+.row-modified { background-color: theme('colors.modified.50'); border-left: 4px solid theme('colors.modified.500'); }
+.row-unchanged{ background-color: white;                       border-left: 4px solid transparent; }

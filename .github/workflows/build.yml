@@ -1,0 +1,99 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-tauri:
+    name: Build (${{ matrix.platform }}${{ matrix.triple && format(' / {0}', matrix.triple) || '' }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-latest,   args: '--target aarch64-apple-darwin', triple: aarch64-apple-darwin }
+          - { platform: macos-latest,   args: '--target x86_64-apple-darwin',  triple: x86_64-apple-darwin }
+          - { platform: ubuntu-latest,  args: '' }
+          - { platform: windows-latest, args: '' }
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            curl wget file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            libgtk-3-dev
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run unit tests (diff engine)
+        run: npm test
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        with:
+          args: ${{ matrix.args }}
+
+      - name: Repackage macOS DMG with first-launch README
+        if: matrix.platform == 'macos-latest'
+        run: |
+          set -euxo pipefail
+          brew install create-dmg
+          APP_PATH="src-tauri/target/${{ matrix.triple }}/release/bundle/macos/P6 Diff Tool.app"
+          mkdir -p dist-dmg
+          OUT="dist-dmg/P6-Diff-Tool-${{ matrix.triple }}.dmg"
+          # create-dmg sometimes exits 2 due to AppleScript cosmetic errors even when the dmg
+          # is produced; tolerate non-zero only if the dmg actually exists.
+          create-dmg \
+            --volname "P6 Diff Tool" \
+            --window-size 660 420 \
+            --icon-size 96 \
+            --icon "P6 Diff Tool.app" 160 185 \
+            --app-drop-link 480 185 \
+            --add-file "READ ME FIRST.txt" "build/macos/READ-ME-FIRST.txt" 320 360 \
+            "$OUT" \
+            "$APP_PATH" || test -f "$OUT"
+          ls -la dist-dmg
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: p6-diff-tool-${{ matrix.platform }}${{ matrix.triple && format('-{0}', matrix.triple) || '' }}-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            dist-dmg/**
+            src-tauri/target/release/bundle/**
+            src-tauri/target/*/release/bundle/**

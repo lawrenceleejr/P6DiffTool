@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "P6 Diff Tool",
+  "version": "0.1.0",
+  "identifier": "com.p6difftool.app",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "P6 Diff Tool",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage", "nsis", "msi", "app", "dmg"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "DeveloperTool",
+    "shortDescription": "Diff two Primavera P6 XER files.",
+    "longDescription": "P6 Diff Tool loads two Primavera P6 XER schedule exports and shows a clear, color-coded diff of activities, relationships, WBS, resources, and calendars, plus project status tables.",
+    "linux": {
+      "deb": { "depends": [] }
+    },
+    "windows": {
+      "nsis": {},
+      "wix": {},
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "signingIdentity": null
+    }
+  }
+}

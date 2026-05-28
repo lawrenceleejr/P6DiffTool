@@ -1,0 +1,43 @@
+P6 Diff Tool — First Launch on macOS
+====================================
+
+This build of P6 Diff Tool is not yet signed with an Apple Developer
+certificate, so macOS will block it the first time you try to open it
+("'P6 Diff Tool' is damaged and can't be opened" or "cannot be opened
+because the developer cannot be verified").
+
+To allow the app:
+
+  1. Drag "P6 Diff Tool" onto the Applications folder shown in this
+     window.
+
+  2. Open the Terminal app (Spotlight: press Cmd+Space, type
+     "Terminal", press Return), then COPY the line below, PASTE it
+     into Terminal, and press Return:
+
+        xattr -dr com.apple.quarantine "/Applications/P6 Diff Tool.app"
+
+     (You may be prompted for your Mac password the first time.)
+
+  3. Open P6 Diff Tool normally from your Applications folder or
+     Launchpad.
+
+
+No Terminal? Alternative method:
+  - Try to open the app from Applications.
+  - macOS will block it. Click "Done" on the warning.
+  - Open System Settings > Privacy & Security.
+  - Scroll down to the "Security" section. You'll see a message
+    about P6 Diff Tool being blocked, with an "Open Anyway" button.
+    Click "Open Anyway", then confirm.
+
+
+Why is this needed?
+  Apple requires apps downloaded from the internet to be signed by a
+  registered Apple Developer (a paid account) and notarized by Apple,
+  otherwise macOS quarantines them on first launch. P6 Diff Tool is
+  free and open-source; once it's distributed with a signing identity
+  this extra step will no longer be necessary.
+
+P6 Diff Tool is open source. Report issues or contribute at the
+project repository.
