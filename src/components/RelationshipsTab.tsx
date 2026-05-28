@@ -24,11 +24,12 @@ function formatType(t?: string): string | undefined {
 }
 
 export function RelationshipsTab({
-  diff, decisions, onToggleDecision
+  diff, decisions, onToggleDecision, onBulkSetDecisions
 }: {
   diff: CategoryDiff<RelationshipRecord>;
   decisions?: Map<string, Decision>;
   onToggleDecision?: (key: string) => void;
+  onBulkSetDecisions?: (keys: string[], decision: Decision) => void;
 }) {
   return (
     <DiffTable
@@ -37,6 +38,7 @@ export function RelationshipsTab({
       emptyMessage="No matching relationships."
       decisions={decisions}
       onToggleDecision={onToggleDecision}
+      onBulkSetDecisions={onBulkSetDecisions}
     />
   );
 }

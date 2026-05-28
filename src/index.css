@@ -8,13 +8,39 @@ html, body, #root {
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  font-family: theme('fontFamily.sans');
+  background-color: theme('colors.bg.base');
+  color: theme('colors.ink.100');
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   scrollbar-gutter: stable;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Status tints — solid colors render identically on WebKitGTK/WKWebView/WebView2. */
-.row-added    { background-color: theme('colors.added.50');    border-left: 4px solid theme('colors.added.500'); }
-.row-removed  { background-color: theme('colors.removed.50');  border-left: 4px solid theme('colors.removed.500'); }
-.row-modified { background-color: theme('colors.modified.50'); border-left: 4px solid theme('colors.modified.500'); }
-.row-unchanged{ background-color: white;                       border-left: 4px solid transparent; }
+/* The whole app is treated as the title bar background; the custom title bar
+   strip lives inside the file picker and is decorated via data-tauri-drag-region. */
+html {
+  background-color: theme('colors.bg.base');
+}
+
+/* Status tints — solid background colors with brighter left accent borders.
+   Render consistently on WebKitGTK/WKWebView/WebView2. */
+.row-added    { background-color: rgb(16 185 129 / 0.08); border-left: 4px solid #10b981; }
+.row-removed  { background-color: rgb(239 68 68 / 0.08);  border-left: 4px solid #ef4444; }
+.row-modified { background-color: rgb(245 158 11 / 0.08); border-left: 4px solid #f59e0b; }
+.row-unchanged{ background-color: transparent;            border-left: 4px solid transparent; }
+.row-added:hover, .row-removed:hover, .row-modified:hover, .row-unchanged:hover {
+  background-color: rgb(255 255 255 / 0.04);
+}
+.row-added:hover    { background-color: rgb(16 185 129 / 0.14); }
+.row-removed:hover  { background-color: rgb(239 68 68 / 0.14); }
+.row-modified:hover { background-color: rgb(245 158 11 / 0.14); }
+
+/* Drop target highlight while dragging a file over a slot. */
+.drop-target {
+  outline: 2px dashed theme('colors.accent.DEFAULT');
+  outline-offset: 2px;
+  background-color: rgb(34 211 238 / 0.08) !important;
+}
+
+/* Native dark color scheme so scrollbars and form controls pick up the theme. */
+:root { color-scheme: dark; }

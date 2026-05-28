@@ -30,11 +30,12 @@ function formatStatus(s?: string): string | undefined {
 }
 
 export function ActivitiesTab({
-  diff, decisions, onToggleDecision
+  diff, decisions, onToggleDecision, onBulkSetDecisions
 }: {
   diff: CategoryDiff<ActivityRecord>;
   decisions?: Map<string, Decision>;
   onToggleDecision?: (key: string) => void;
+  onBulkSetDecisions?: (keys: string[], decision: Decision) => void;
 }) {
   return (
     <DiffTable
@@ -43,6 +44,7 @@ export function ActivitiesTab({
       emptyMessage="No matching activities."
       decisions={decisions}
       onToggleDecision={onToggleDecision}
+      onBulkSetDecisions={onBulkSetDecisions}
     />
   );
 }

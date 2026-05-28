@@ -3,10 +3,34 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI Variable"', '"Segoe UI"', 'Inter', 'Roboto', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace']
+      },
       colors: {
-        added: { 50: '#ecfdf5', 100: '#d1fae5', 500: '#10b981', 700: '#047857' },
-        removed: { 50: '#fef2f2', 100: '#fee2e2', 500: '#ef4444', 700: '#b91c1c' },
-        modified: { 50: '#fffbeb', 100: '#fef3c7', 500: '#f59e0b', 700: '#b45309' }
+        bg: {
+          base: '#0b1220',     // app background
+          surface: '#111827',  // top bar, sticky headers
+          raised: '#1f2937',   // cards, expanded panels
+          hover:  '#1e2a3d'
+        },
+        line: {
+          DEFAULT: '#1f2937',
+          strong:  '#334155'
+        },
+        ink: {
+          50: '#f8fafc',
+          100: '#e2e8f0',
+          200: '#cbd5e1',
+          300: '#94a3b8',
+          400: '#64748b',
+          500: '#475569'
+        },
+        accent: {
+          DEFAULT: '#22d3ee',  // cyan-400
+          hover:   '#67e8f9',
+          ink:     '#082f3a'
+        }
       }
     }
   },

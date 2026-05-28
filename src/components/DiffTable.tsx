@@ -6,39 +6,33 @@ import type { Decision } from '../lib/merge';
 export interface DiffColumn<T> {
   key: string;
   header: string;
-  /** Width in pixels. Used in a fixed table-layout for stable cross-WebView alignment. */
   width: number;
-  /** Accessor for display in normal rows. */
   get: (row: DiffRow<T>) => unknown;
-  /** Optional alignment. */
   align?: 'left' | 'right';
-  /** Optional renderer for old/new comparison in expanded view. */
   format?: (value: unknown) => string;
 }
 
 interface Props<T> {
   diff: CategoryDiff<T>;
   columns: DiffColumn<T>[];
-  /** What to show in the "name / id" column header when no row is matched. */
   emptyMessage?: string;
-  /** Optional per-row decision state. When provided, rows with status !=
-   * unchanged show an "Apply" checkbox (checked = accept, unchecked = reject). */
   decisions?: Map<string, Decision>;
   onToggleDecision?: (key: string) => void;
+  onBulkSetDecisions?: (keys: string[], decision: Decision) => void;
 }
 
 type FilterMode = 'all' | 'changes-only' | ChangeStatus;
 
-const ROW_HEIGHT = 36;
-const EXPANDED_EXTRA = 28;
+const ROW_HEIGHT = 38;
+const EXPANDED_EXTRA = 30;
 
 export function DiffTable<T>({
-  diff, columns, emptyMessage = 'No rows.', decisions, onToggleDecision
+  diff, columns, emptyMessage = 'No rows.', decisions, onToggleDecision, onBulkSetDecisions
 }: Props<T>) {
-  const showDecision = decisions !== undefined && onToggleDecision !== undefined;
   const [filter, setFilter] = useState<FilterMode>('changes-only');
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const showDecision = decisions !== undefined && onToggleDecision !== undefined;
 
   const visibleRows = useMemo(() => {
     let rows = diff.rows;
@@ -61,8 +55,13 @@ export function DiffTable<T>({
     return rows;
   }, [diff.rows, filter, query, columns]);
 
+  const visibleChangeKeys = useMemo(
+    () => visibleRows.filter(r => r.status !== 'unchanged').map(r => r.key),
+    [visibleRows]
+  );
+
   const DECISION_WIDTH = 56;
-  const totalWidth = columns.reduce((sum, c) => sum + c.width, 0) + 28 + (showDecision ? DECISION_WIDTH : 0); // +28 left status, +56 decision
+  const totalWidth = columns.reduce((sum, c) => sum + c.width, 0) + 28 + (showDecision ? DECISION_WIDTH : 0);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -71,7 +70,7 @@ export function DiffTable<T>({
     estimateSize: i => {
       const row = visibleRows[i];
       const isExpanded = expanded.has(row.key);
-      const extra = isExpanded ? Math.max(row.fields.length, 1) * EXPANDED_EXTRA + 12 : 0;
+      const extra = isExpanded ? Math.max(row.fields.length, 1) * EXPANDED_EXTRA + 16 : 0;
       return ROW_HEIGHT + extra;
     },
     overscan: 8,
@@ -96,8 +95,16 @@ export function DiffTable<T>({
         query={query}
         onQuery={setQuery}
         visibleCount={visibleRows.length}
+        showDecision={showDecision}
+        onApplyAllVisible={
+          onBulkSetDecisions ? () => onBulkSetDecisions(visibleChangeKeys, 'accept') : undefined
+        }
+        onApplyNoneVisible={
+          onBulkSetDecisions ? () => onBulkSetDecisions(visibleChangeKeys, 'reject') : undefined
+        }
+        visibleChangeCount={visibleChangeKeys.length}
       />
-      <div ref={parentRef} className="flex-1 overflow-auto bg-white">
+      <div ref={parentRef} className="flex-1 overflow-auto bg-bg-base">
         <div style={{ width: totalWidth, position: 'relative' }}>
           <Header columns={columns} showDecision={showDecision} decisionWidth={DECISION_WIDTH} />
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
@@ -130,7 +137,7 @@ export function DiffTable<T>({
               );
             })}
             {visibleRows.length === 0 && (
-              <div className="p-6 text-center text-slate-500">{emptyMessage}</div>
+              <div className="p-8 text-center text-ink-400">{emptyMessage}</div>
             )}
           </div>
         </div>
@@ -140,7 +147,8 @@ export function DiffTable<T>({
 }
 
 function Toolbar<T>({
-  diff, filter, onFilter, query, onQuery, visibleCount
+  diff, filter, onFilter, query, onQuery, visibleCount,
+  showDecision, onApplyAllVisible, onApplyNoneVisible, visibleChangeCount
 }: {
   diff: CategoryDiff<T>;
   filter: FilterMode;
@@ -148,10 +156,14 @@ function Toolbar<T>({
   query: string;
   onQuery: (q: string) => void;
   visibleCount: number;
+  showDecision: boolean;
+  onApplyAllVisible?: () => void;
+  onApplyNoneVisible?: () => void;
+  visibleChangeCount: number;
 }) {
   const total = diff.rows.length;
   return (
-    <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-200 bg-slate-50 text-sm">
+    <div className="flex items-center gap-3 px-4 py-2 border-b border-line bg-bg-surface text-sm flex-wrap">
       <div className="flex gap-1">
         <FilterChip label={`Changes (${diff.counts.added + diff.counts.removed + diff.counts.modified})`} active={filter === 'changes-only'} onClick={() => onFilter('changes-only')} />
         <FilterChip label={`All (${total})`} active={filter === 'all'} onClick={() => onFilter('all')} />
@@ -163,9 +175,30 @@ function Toolbar<T>({
         value={query}
         onChange={e => onQuery(e.target.value)}
         placeholder="Filter…"
-        className="ml-2 px-2 py-1 text-sm border border-slate-300 rounded w-48 focus:outline-none focus:ring-1 focus:ring-slate-400"
+        className="ml-2 px-2.5 py-1 text-sm rounded-md border border-line bg-bg-base text-ink-100 placeholder:text-ink-400 w-48 focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/40"
       />
-      <div className="ml-auto text-xs text-slate-500">{visibleCount} shown</div>
+      {showDecision && onApplyAllVisible && onApplyNoneVisible && (
+        <div className="flex items-center gap-1.5 ml-2">
+          <span className="text-xs text-ink-400 mr-1">Bulk:</span>
+          <button
+            onClick={onApplyAllVisible}
+            disabled={visibleChangeCount === 0}
+            className="px-2.5 py-1 text-xs font-medium rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title={`Mark all ${visibleChangeCount} currently-shown changes as Apply`}
+          >
+            Apply all
+          </button>
+          <button
+            onClick={onApplyNoneVisible}
+            disabled={visibleChangeCount === 0}
+            className="px-2.5 py-1 text-xs font-medium rounded-md border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            title={`Mark all ${visibleChangeCount} currently-shown changes as Revert`}
+          >
+            Apply none
+          </button>
+        </div>
+      )}
+      <div className="ml-auto text-xs text-ink-400">{visibleCount} shown</div>
     </div>
   );
 }
@@ -173,15 +206,15 @@ function Toolbar<T>({
 function FilterChip({
   label, active, onClick, accent
 }: { label: string; active: boolean; onClick: () => void; accent?: 'added' | 'removed' | 'modified' }) {
-  const tints =
-    accent === 'added' ? 'border-added-500 text-added-700' :
-    accent === 'removed' ? 'border-removed-500 text-removed-700' :
-    accent === 'modified' ? 'border-modified-500 text-modified-700' :
-    'border-slate-300 text-slate-700';
+  const tone =
+    accent === 'added' ? 'border-emerald-500/40 text-emerald-300' :
+    accent === 'removed' ? 'border-red-500/40 text-red-300' :
+    accent === 'modified' ? 'border-amber-500/40 text-amber-300' :
+    'border-line text-ink-200';
   return (
     <button
       onClick={onClick}
-      className={`px-2 py-1 text-xs rounded border ${tints} ${active ? 'bg-slate-200 font-semibold' : 'bg-white hover:bg-slate-100'}`}
+      className={`px-2.5 py-1 text-xs rounded-md border ${tone} ${active ? 'bg-bg-raised font-semibold' : 'bg-bg-base hover:bg-bg-hover'} transition-colors`}
     >
       {label}
     </button>
@@ -193,7 +226,7 @@ function Header<T>({
 }: { columns: DiffColumn<T>[]; showDecision: boolean; decisionWidth: number }) {
   return (
     <div
-      className="flex bg-slate-100 border-b border-slate-200 text-xs uppercase tracking-wide text-slate-600 font-semibold"
+      className="flex bg-bg-surface border-b border-line text-xs uppercase tracking-wide text-ink-300 font-semibold"
       style={{ position: 'sticky', top: 0, zIndex: 1, height: ROW_HEIGHT }}
     >
       <div style={{ width: 28 }} />
@@ -230,13 +263,13 @@ function Row<T>({
   const cls = `row-${row.status}`;
   const showDecisionCell = decision !== undefined && row.status !== 'unchanged';
   return (
-    <div className={`${cls} hover:bg-slate-100`}>
+    <div className={cls}>
       <div
         className="flex items-center cursor-pointer"
         style={{ height: ROW_HEIGHT }}
         onClick={row.status === 'modified' ? onToggle : undefined}
       >
-        <div className="flex items-center justify-center text-slate-400 text-xs" style={{ width: 28 }}>
+        <div className="flex items-center justify-center text-ink-400 text-xs" style={{ width: 28 }}>
           {row.status === 'modified' ? (expanded ? '▼' : '▶') : statusSymbol(row.status)}
         </div>
         {decisionWidth > 0 && (
@@ -252,7 +285,7 @@ function Row<T>({
                 title={decision === 'accept' ? 'Will be applied — uncheck to revert' : 'Will be reverted — check to keep this change'}
                 checked={decision === 'accept'}
                 onChange={onToggleDecision}
-                className="w-4 h-4 cursor-pointer accent-slate-700"
+                className="w-4 h-4 cursor-pointer accent-accent"
               />
             )}
           </div>
@@ -262,31 +295,31 @@ function Row<T>({
           return (
             <div
               key={c.key}
-              className="px-2 truncate text-sm text-slate-800"
+              className="px-2 truncate text-sm text-ink-100"
               style={{ width: c.width, textAlign: c.align ?? 'left' }}
               title={v == null ? '' : String(v)}
             >
-              {v == null ? <span className="text-slate-400">—</span> : String(v)}
+              {v == null ? <span className="text-ink-500">—</span> : String(v)}
             </div>
           );
         })}
       </div>
       {expanded && row.fields.length > 0 && (
-        <div className="mr-3 mb-2 mt-1 border border-slate-200 rounded bg-white" style={{ marginLeft: 28 + decisionWidth }}>
+        <div className="mr-3 mb-2 mt-1 border border-line rounded-md bg-bg-raised" style={{ marginLeft: 28 + decisionWidth }}>
           <table className="w-full text-xs">
             <thead>
-              <tr className="text-slate-500 bg-slate-50">
+              <tr className="text-ink-400 bg-bg-surface">
                 <th className="text-left px-3 py-1.5 w-1/4">Field</th>
-                <th className="text-left px-3 py-1.5 w-3/8 text-removed-700">Baseline</th>
-                <th className="text-left px-3 py-1.5 w-3/8 text-added-700">Revised</th>
+                <th className="text-left px-3 py-1.5 w-3/8 text-red-300">Baseline</th>
+                <th className="text-left px-3 py-1.5 w-3/8 text-emerald-300">Revised</th>
               </tr>
             </thead>
             <tbody>
               {row.fields.map(f => (
-                <tr key={f.field} className="border-t border-slate-100">
-                  <td className="px-3 py-1 text-slate-600">{f.label}</td>
-                  <td className="px-3 py-1 font-mono text-slate-800 line-through opacity-70">{formatValue(f.oldValue)}</td>
-                  <td className="px-3 py-1 font-mono text-slate-900 font-semibold">{formatValue(f.newValue)}</td>
+                <tr key={f.field} className="border-t border-line">
+                  <td className="px-3 py-1.5 text-ink-300">{f.label}</td>
+                  <td className="px-3 py-1.5 font-mono text-ink-200 line-through opacity-70">{formatValue(f.oldValue)}</td>
+                  <td className="px-3 py-1.5 font-mono text-ink-50 font-semibold">{formatValue(f.newValue)}</td>
                 </tr>
               ))}
             </tbody>

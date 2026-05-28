@@ -1,5 +1,6 @@
-import { useMemo, useState, useCallback } from 'react';
-import { FilePickerBar } from './components/FilePickerBar';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { FilePickerBar, type DropTargetSlot } from './components/FilePickerBar';
 import { Dashboard } from './components/Dashboard';
 import { ActivitiesTab } from './components/ActivitiesTab';
 import { RelationshipsTab } from './components/RelationshipsTab';
@@ -8,9 +9,8 @@ import { ResourcesTab } from './components/ResourcesTab';
 import { CalendarsTab } from './components/CalendarsTab';
 import { diffXer, type DiffResult } from './lib/diff';
 import { summarize, type FileSummary } from './lib/summary';
-import type { LoadedXer } from './lib/xer';
+import { loadXerFromPath, saveXer, type LoadedXer } from './lib/xer';
 import { buildMergedXer, decisionCounts, emptyDecisions, type DecisionState, type Decision } from './lib/merge';
-import { saveXer } from './lib/xer';
 
 type Tab = 'overview' | 'activities' | 'relationships' | 'wbs' | 'resources' | 'calendars';
 
@@ -21,6 +21,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<DecisionState>(() => emptyDecisions());
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [activeDropTarget, setActiveDropTarget] = useState<DropTargetSlot | null>(null);
 
   const baselineSummary: FileSummary | null = useMemo(
     () => (baseline ? safeSummarize(baseline) : null),
@@ -42,8 +43,6 @@ export default function App() {
     }
   }, [baseline, revised]);
 
-  // Reset decisions whenever the input files change (stale keys would be harmless
-  // but the count would look misleading).
   useMemo(() => {
     setDecisions(emptyDecisions());
     setExportStatus(null);
@@ -73,6 +72,85 @@ export default function App() {
     });
   }, []);
 
+  const bulkSetActivityDecisions = useCallback((keys: string[], decision: Decision) => {
+    setDecisions(prev => {
+      const next: DecisionState = {
+        activities: new Map(prev.activities),
+        relationships: prev.relationships
+      };
+      for (const k of keys) next.activities.set(k, decision);
+      return next;
+    });
+  }, []);
+
+  const bulkSetRelationshipDecisions = useCallback((keys: string[], decision: Decision) => {
+    setDecisions(prev => {
+      const next: DecisionState = {
+        activities: prev.activities,
+        relationships: new Map(prev.relationships)
+      };
+      for (const k of keys) next.relationships.set(k, decision);
+      return next;
+    });
+  }, []);
+
+  // ---------- Drag-and-drop XER files onto the file slots ------------------
+  //
+  // Tauri 2 fires window-level drag/drop events with a position. We hit-test
+  // the position against the DOM to find which slot ([data-drop-slot]) the
+  // user is over, highlight it on 'over', and load the file into it on 'drop'.
+
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+    let mounted = true;
+
+    async function loadInto(slot: DropTargetSlot, path: string) {
+      try {
+        const loaded = await loadXerFromPath(path);
+        if (slot === 'baseline') setBaseline(loaded); else setRevised(loaded);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+
+    (async () => {
+      try {
+        const unlisten = await getCurrentWindow().onDragDropEvent(event => {
+          const p = event.payload as any;
+          const type: string = p?.type;
+          if (type === 'over' || type === 'enter') {
+            setActiveDropTarget(slotAtPoint(p.position));
+          } else if (type === 'leave') {
+            setActiveDropTarget(null);
+          } else if (type === 'drop') {
+            const paths: string[] = (p.paths ?? []).filter((s: string) => s.toLowerCase().endsWith('.xer'));
+            const target = slotAtPoint(p.position);
+            setActiveDropTarget(null);
+            if (paths.length === 0) return;
+            // Single drop: target wins; if no target, fill the empty slot.
+            if (paths.length === 1) {
+              const slot: DropTargetSlot = target ?? (baseline ? 'revised' : 'baseline');
+              loadInto(slot, paths[0]);
+            } else {
+              // Two+ files: first -> baseline, second -> revised. Anything else ignored.
+              loadInto('baseline', paths[0]);
+              loadInto('revised',  paths[1]);
+            }
+          }
+        });
+        if (mounted) cleanup = unlisten;
+        else unlisten();
+      } catch {
+        // not running under Tauri (e.g. vite dev) — drag/drop unavailable
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      cleanup?.();
+    };
+  }, [baseline, revised]);
+
   async function onExport() {
     if (!baseline || !revised || !diff) return;
     setExportStatus('Building merged XER…');
@@ -99,7 +177,7 @@ export default function App() {
   const counts = diff ? decisionCounts(diff, decisions) : { accepted: 0, rejected: 0 };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-bg-base">
       <FilePickerBar
         baseline={baseline}
         revised={revised}
@@ -111,11 +189,12 @@ export default function App() {
         exportStatus={exportStatus}
         acceptedCount={counts.accepted}
         rejectedCount={counts.rejected}
+        activeDropTarget={activeDropTarget}
       />
       <Tabs tab={tab} setTab={setTab} diff={diff} hasFiles={!!(baseline || revised)} />
       {error && (
-        <div className="px-4 py-2 bg-removed-50 text-removed-700 text-sm border-b border-removed-200">
-          Diff error: {error}
+        <div className="px-4 py-2 bg-red-500/10 text-red-300 text-sm border-b border-red-500/30">
+          {error}
         </div>
       )}
       <div className="flex-1 min-h-0 overflow-hidden">
@@ -127,6 +206,7 @@ export default function App() {
             diff={diff.activities}
             decisions={decisions.activities}
             onToggleDecision={toggleActivityDecision}
+            onBulkSetDecisions={bulkSetActivityDecisions}
           />
         )}
         {tab === 'relationships' && diff && (
@@ -134,13 +214,14 @@ export default function App() {
             diff={diff.relationships}
             decisions={decisions.relationships}
             onToggleDecision={toggleRelationshipDecision}
+            onBulkSetDecisions={bulkSetRelationshipDecisions}
           />
         )}
         {tab === 'wbs'           && diff && <WbsTab           diff={diff.wbs} />}
         {tab === 'resources'     && diff && <ResourcesTab     diff={diff.resources} />}
         {tab === 'calendars'     && diff && <CalendarsTab     diff={diff.calendars} />}
         {tab !== 'overview' && !diff && (
-          <div className="p-8 text-center text-slate-500">
+          <div className="p-8 text-center text-ink-400">
             Load both Baseline and Revised XER files to see this tab.
           </div>
         )}
@@ -151,6 +232,20 @@ export default function App() {
 
 function safeSummarize(loaded: LoadedXer): FileSummary | null {
   try { return summarize(loaded.xer); } catch { return null; }
+}
+
+/** Convert a Tauri PhysicalPosition to logical coords and hit-test for a
+ * [data-drop-slot] ancestor. Returns null if not over a slot. */
+function slotAtPoint(position: { x: number; y: number } | undefined): DropTargetSlot | null {
+  if (!position) return null;
+  const scale = window.devicePixelRatio || 1;
+  const x = position.x / scale;
+  const y = position.y / scale;
+  const el = document.elementFromPoint(x, y) as HTMLElement | null;
+  if (!el) return null;
+  const slotEl = el.closest('[data-drop-slot]') as HTMLElement | null;
+  const slot = slotEl?.getAttribute('data-drop-slot');
+  return slot === 'baseline' || slot === 'revised' ? slot : null;
 }
 
 function Tabs({
@@ -165,7 +260,7 @@ function Tabs({
     { id: 'calendars',     label: 'Calendars',     badge: diff ? changes(diff.calendars.counts) : undefined }
   ];
   return (
-    <div className="flex items-end border-b border-slate-200 bg-white px-2">
+    <div className="flex items-end border-b border-line bg-bg-surface px-2">
       {items.map(it => {
         const disabled = !hasFiles && it.id !== 'overview';
         const active = tab === it.id;
@@ -174,9 +269,9 @@ function Tabs({
             key={it.id}
             onClick={() => !disabled && setTab(it.id)}
             disabled={disabled}
-            className={`px-4 py-2 text-sm border-b-2 ${active ? 'border-slate-900 font-semibold text-slate-900' : 'border-transparent text-slate-600 hover:text-slate-900'} disabled:opacity-40 disabled:cursor-not-allowed`}
+            className={`px-4 py-2.5 text-sm border-b-2 transition-colors ${active ? 'border-accent text-ink-50 font-semibold' : 'border-transparent text-ink-300 hover:text-ink-100'} disabled:opacity-30 disabled:cursor-not-allowed`}
           >
-            {it.label}{it.badge ? <span className="ml-1.5 text-xs text-slate-500">({it.badge})</span> : null}
+            {it.label}{it.badge ? <span className="ml-1.5 text-xs text-ink-400">({it.badge})</span> : null}
           </button>
         );
       })}
