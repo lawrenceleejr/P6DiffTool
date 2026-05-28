@@ -67,16 +67,23 @@ export interface ResolutionState {
   activityRows: Map<string, RowResolution>;
   /** Per-field resolution for modify-modify. Keyed by row key -> field name. */
   activityFields: Map<string, Map<string, FieldResolution>>;
+  /** Row keys whose CLEAN change should be skipped (user opted out from the
+   * diff tab). Conflicts live in the row/field maps above; no-ops are not
+   * tracked since they're no-ops by definition. */
+  activitySkipClean: Set<string>;
   relationshipRows: Map<string, RowResolution>;
   relationshipFields: Map<string, Map<string, FieldResolution>>;
+  relationshipSkipClean: Set<string>;
 }
 
 export function emptyResolutions(): ResolutionState {
   return {
     activityRows: new Map(),
     activityFields: new Map(),
+    activitySkipClean: new Set(),
     relationshipRows: new Map(),
-    relationshipFields: new Map()
+    relationshipFields: new Map(),
+    relationshipSkipClean: new Set()
   };
 }
 
@@ -286,13 +293,15 @@ export function applyThreeWay(
   for (const row of threeWay.activities.rows) {
     const r = applyActivityRow(merged, xerA, xerB, row,
       resolutions.activityRows.get(row.key),
-      resolutions.activityFields.get(row.key) ?? new Map());
+      resolutions.activityFields.get(row.key) ?? new Map(),
+      resolutions.activitySkipClean.has(row.key));
     bump(stats, r);
   }
   for (const row of threeWay.relationships.rows) {
     const r = applyRelationshipRow(merged, xerA, xerB, row,
       resolutions.relationshipRows.get(row.key),
-      resolutions.relationshipFields.get(row.key) ?? new Map());
+      resolutions.relationshipFields.get(row.key) ?? new Map(),
+      resolutions.relationshipSkipClean.has(row.key));
     bump(stats, r);
   }
 
@@ -310,12 +319,14 @@ function applyActivityRow(
   merged: XER, _xerA: XER, xerB: XER,
   row: ThreeWayRow<ActivityRecord>,
   rowRes: RowResolution | undefined,
-  fieldRes: Map<string, FieldResolution>
+  fieldRes: Map<string, FieldResolution>,
+  skipClean: boolean
 ): 'applied' | 'skipped' | 'unresolved' {
   if (row.status === 'no-op') return 'skipped';
 
-  // Cleans: apply automatically.
+  // Cleans: apply unless the user opted out from the diff view.
   if (row.status === 'clean') {
+    if (skipClean) return 'skipped';
     if (row.changeFromBase === 'added' && row.source) {
       return insertTaskFrom(merged, xerB, row.source) ? 'applied' : 'skipped';
     }
@@ -410,11 +421,13 @@ function applyRelationshipRow(
   merged: XER, _xerA: XER, xerB: XER,
   row: ThreeWayRow<RelationshipRecord>,
   rowRes: RowResolution | undefined,
-  fieldRes: Map<string, FieldResolution>
+  fieldRes: Map<string, FieldResolution>,
+  skipClean: boolean
 ): 'applied' | 'skipped' | 'unresolved' {
   if (row.status === 'no-op') return 'skipped';
 
   if (row.status === 'clean') {
+    if (skipClean) return 'skipped';
     if (row.changeFromBase === 'added' && row.source) {
       return insertRelFrom(merged, xerB, row.source) ? 'applied' : 'skipped';
     }

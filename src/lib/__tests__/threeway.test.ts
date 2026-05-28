@@ -239,3 +239,23 @@ describe('applyThreeWay — resolving conflicts', () => {
     expect(new XER(text).tasks.length).toBe(merged.tasks.length);
   });
 });
+
+describe('applyThreeWay — opting out of clean changes from the diff tab', () => {
+  const { aText, bText, cText, xerA, xerB, xerC } = load();
+  const r = computeThreeWay(xerA, xerB, xerC);
+
+  it('A3000 (clean status change) applies by default', () => {
+    const { xer: merged } = applyThreeWay(aText, bText, cText, r, emptyResolutions());
+    expect(findTask(merged, 'A3000')?.statusCode).toBe('TK_Active');
+  });
+
+  it('adding A3000 to activitySkipClean keeps the trunk value (TK_NotStart)', () => {
+    const cleanA3000 = r.activities.rows.find(row => row.key === 'A3000' && row.status === 'clean');
+    expect(cleanA3000).toBeDefined();
+    const res = emptyResolutions();
+    res.activitySkipClean.add('A3000');
+    const { xer: merged, stats } = applyThreeWay(aText, bText, cText, r, res);
+    expect(findTask(merged, 'A3000')?.statusCode).toBe('TK_NotStart');
+    expect(stats.skipped).toBeGreaterThan(0);
+  });
+});

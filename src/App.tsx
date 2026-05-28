@@ -85,7 +85,23 @@ export default function App() {
   // is computed at read time. Toggling clears the override when the new
   // value matches the default, so the user can fully reset to defaults.
 
+  // Toggle the Apply checkbox on a row. In 3-way mode this moves the row
+  // in/out of resolutions.{activity|relationship}SkipClean (only meaningful
+  // on CLEAN rows). In 2-way mode it updates the sparse decisions override.
   const toggleDecision = useCallback((category: Category, key: string) => {
+    if (threeWay) {
+      const tw = category === 'activities' ? threeWay.activities : threeWay.relationships;
+      const row = tw.rows.find(r => r.key === key);
+      if (!row || row.status !== 'clean') return;
+      setResolutions(prev => {
+        const setKey = category === 'activities' ? 'activitySkipClean' : 'relationshipSkipClean';
+        const next: ResolutionState = { ...prev, [setKey]: new Set(prev[setKey]) };
+        const s = next[setKey] as Set<string>;
+        if (s.has(key)) s.delete(key); else s.add(key);
+        return next;
+      });
+      return;
+    }
     setDecisions(prev => {
       if (!diff) return prev;
       const row = diff[category].rows.find(r => r.key === key);
@@ -97,9 +113,27 @@ export default function App() {
       if (next === def) map.delete(key); else map.set(key, next);
       return { ...prev, [category]: map };
     });
-  }, [diff]);
+  }, [diff, threeWay]);
 
+  // Bulk Apply all / Apply none. In 3-way mode this only touches CLEAN rows
+  // (conflicts must be resolved on the Conflicts tab); in 2-way mode it
+  // sets every selected row's decision per the supplied value.
   const bulkSetDecisions = useCallback((category: Category, keys: string[], decision: Decision) => {
+    if (threeWay) {
+      const tw = category === 'activities' ? threeWay.activities : threeWay.relationships;
+      const cleanKeys = new Set(tw.rows.filter(r => r.status === 'clean').map(r => r.key));
+      setResolutions(prev => {
+        const setKey = category === 'activities' ? 'activitySkipClean' : 'relationshipSkipClean';
+        const next: ResolutionState = { ...prev, [setKey]: new Set(prev[setKey]) };
+        const s = next[setKey] as Set<string>;
+        for (const k of keys) {
+          if (!cleanKeys.has(k)) continue;
+          if (decision === 'skip') s.add(k); else s.delete(k);
+        }
+        return next;
+      });
+      return;
+    }
     setDecisions(prev => {
       if (!diff) return prev;
       const map = new Map(prev[category]);
@@ -111,29 +145,51 @@ export default function App() {
       }
       return { ...prev, [category]: map };
     });
-  }, [diff]);
+  }, [diff, threeWay]);
 
-  // Effective decision per row (default + overrides), passed to the diff tabs
-  // so the Apply checkboxes render correctly per row status.
+  // Effective Apply-checkbox state per row, passed to the diff tabs.
+  //
+  // In 2-way mode (no branchBase) every changed row gets a checkbox driven
+  // by per-status defaults + sparse user overrides.
+  //
+  // In 3-way mode, only CLEAN rows get a checkbox (default = apply, user can
+  // skip via resolutions.activitySkipClean). Conflicts have to go through
+  // the Conflicts tab (the Apply column shows nothing for them). No-op rows
+  // never get a checkbox.
+
   const effectiveActivityDecisions = useMemo(() => {
     const m = new Map<string, Decision>();
     if (!diff) return m;
-    for (const row of diff.activities.rows) {
-      if (row.status === 'unchanged') continue;
-      m.set(row.key, decisions.activities.get(row.key) ?? defaultDecision(row.status));
+    if (threeWay) {
+      for (const row of threeWay.activities.rows) {
+        if (row.status !== 'clean') continue;
+        m.set(row.key, resolutions.activitySkipClean.has(row.key) ? 'skip' : 'apply');
+      }
+    } else {
+      for (const row of diff.activities.rows) {
+        if (row.status === 'unchanged') continue;
+        m.set(row.key, decisions.activities.get(row.key) ?? defaultDecision(row.status));
+      }
     }
     return m;
-  }, [diff, decisions.activities]);
+  }, [diff, threeWay, decisions.activities, resolutions.activitySkipClean]);
 
   const effectiveRelationshipDecisions = useMemo(() => {
     const m = new Map<string, Decision>();
     if (!diff) return m;
-    for (const row of diff.relationships.rows) {
-      if (row.status === 'unchanged') continue;
-      m.set(row.key, decisions.relationships.get(row.key) ?? defaultDecision(row.status));
+    if (threeWay) {
+      for (const row of threeWay.relationships.rows) {
+        if (row.status !== 'clean') continue;
+        m.set(row.key, resolutions.relationshipSkipClean.has(row.key) ? 'skip' : 'apply');
+      }
+    } else {
+      for (const row of diff.relationships.rows) {
+        if (row.status === 'unchanged') continue;
+        m.set(row.key, decisions.relationships.get(row.key) ?? defaultDecision(row.status));
+      }
     }
     return m;
-  }, [diff, decisions.relationships]);
+  }, [diff, threeWay, decisions.relationships, resolutions.relationshipSkipClean]);
 
   // ---------- 3-way resolution updates -------------------------------------
 
@@ -339,17 +395,17 @@ export default function App() {
         {tab === 'activities' && diff && (
           <ActivitiesTab
             diff={diff.activities}
-            decisions={threeWay ? undefined : effectiveActivityDecisions}
-            onToggleDecision={threeWay ? undefined : (k => toggleDecision('activities', k))}
-            onBulkSetDecisions={threeWay ? undefined : ((keys, d) => bulkSetDecisions('activities', keys, d))}
+            decisions={effectiveActivityDecisions}
+            onToggleDecision={k => toggleDecision('activities', k)}
+            onBulkSetDecisions={(keys, d) => bulkSetDecisions('activities', keys, d)}
           />
         )}
         {tab === 'relationships' && diff && (
           <RelationshipsTab
             diff={diff.relationships}
-            decisions={threeWay ? undefined : effectiveRelationshipDecisions}
-            onToggleDecision={threeWay ? undefined : (k => toggleDecision('relationships', k))}
-            onBulkSetDecisions={threeWay ? undefined : ((keys, d) => bulkSetDecisions('relationships', keys, d))}
+            decisions={effectiveRelationshipDecisions}
+            onToggleDecision={k => toggleDecision('relationships', k)}
+            onBulkSetDecisions={(keys, d) => bulkSetDecisions('relationships', keys, d)}
           />
         )}
         {tab === 'wbs'       && diff && <WbsTab       diff={diff.wbs} />}
