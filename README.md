@@ -109,7 +109,7 @@ run, and download the artifact for your OS:
 |---|---|
 | macOS (Apple Silicon) | `P6-Diff-Tool-aarch64-apple-darwin.dmg` |
 | macOS (Intel) | `P6-Diff-Tool-x86_64-apple-darwin.dmg` |
-| Windows | `.msi` (WiX) and `.exe` (NSIS) |
+| Windows | `P6-Diff-Tool.exe` — single self-contained portable exe (no installer) |
 | Linux | `.AppImage` and `.deb` |
 
 The macOS `.dmg` is repackaged in CI to include a clearly-marked
@@ -131,8 +131,15 @@ Or, no Terminal: try to open the app, click **Done** on the warning, then
 
 ### First launch on Windows
 
-The NSIS installer is unsigned, so Windows SmartScreen shows a warning.
-Click **More info → Run anyway** to install.
+The Windows build is a single **portable** `.exe` — no install step. Download
+`P6-Diff-Tool.exe` from the CI artifact and double-click it. Since the build
+is unsigned, Windows SmartScreen shows a warning on first launch; click
+**More info → Run anyway**.
+
+The only host requirement is **Microsoft WebView2**, which ships with every
+modern Windows 10 build and all of Windows 11. If by chance it's missing,
+download the Evergreen Bootstrapper from Microsoft and the app will pick it
+up automatically.
 
 ---
 

@@ -29,7 +29,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["deb", "appimage", "nsis", "msi", "app", "dmg"],
+    "targets": ["deb", "appimage", "app", "dmg"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -44,8 +44,6 @@
       "deb": { "depends": [] }
     },
     "windows": {
-      "nsis": {},
-      "wix": {},
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }
     },
     "macOS": {

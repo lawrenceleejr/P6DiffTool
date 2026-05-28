@@ -67,6 +67,18 @@ jobs:
         with:
           args: ${{ matrix.args }}
 
+      - name: Package Windows portable exe
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p portable
+          # Copy the bare release exe out of target/release. Tauri statically
+          # links the Rust side; the only runtime requirement on the host is
+          # Microsoft WebView2 (preinstalled on modern Windows 10/11).
+          cp "src-tauri/target/release/p6-diff-tool.exe" "portable/P6-Diff-Tool.exe"
+          ls -la portable
+
       - name: Repackage macOS DMG with first-launch README
         if: matrix.platform == 'macos-latest'
         run: |
@@ -94,6 +106,7 @@ jobs:
           name: p6-diff-tool-${{ matrix.platform }}${{ matrix.triple && format('-{0}', matrix.triple) || '' }}-${{ github.run_id }}
           if-no-files-found: error
           path: |
+            portable/**
             dist-dmg/**
             src-tauri/target/release/bundle/**
             src-tauri/target/*/release/bundle/**
