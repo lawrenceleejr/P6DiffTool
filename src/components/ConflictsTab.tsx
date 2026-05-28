@@ -1,6 +1,7 @@
 // Dedicated conflict-resolution surface for 3-way merge. Lists every
-// conflict row (across Activities + Logic) with per-row "Take B" / "Keep C"
-// shortcuts plus per-field [B] [C] [A] buttons for modify-modify cases.
+// conflict row (across Activities + Logic) with per-row "Take branch" /
+// "Keep trunk" shortcuts plus per-field [Branch] [Trunk] [Base] buttons
+// for modify-modify cases.
 
 import type {
   ThreeWayResult, ThreeWayRow, ThreeWayField,
@@ -35,8 +36,8 @@ export function ConflictsTab({
       <div className="h-full overflow-auto p-12 text-center">
         <div className="text-2xl font-semibold text-emerald-300 mb-2">No conflicts</div>
         <p className="text-sm text-ink-400 max-w-md mx-auto">
-          The A→B changes apply cleanly onto your Target file. You can export
-          the patched target directly from the top bar.
+          The branch changes apply cleanly onto the trunk. You can export
+          the updated trunk directly from the top bar.
         </p>
       </div>
     );
@@ -103,16 +104,16 @@ function ConflictSection<T>({
           <button
             onClick={() => onBulk(keys, 'take-source')}
             className="px-2.5 py-1 text-xs font-medium rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 transition-colors"
-            title="Resolve every conflict in this section by taking B's value"
+            title="Resolve every conflict in this section by taking the branch's value"
           >
-            Take source (B)
+            Take branch
           </button>
           <button
             onClick={() => onBulk(keys, 'keep-target')}
             className="px-2.5 py-1 text-xs font-medium rounded-md border border-line bg-bg-raised text-ink-200 hover:bg-bg-hover transition-colors"
-            title="Resolve every conflict in this section by keeping C's value"
+            title="Resolve every conflict in this section by keeping the trunk's value"
           >
-            Keep target (C)
+            Keep trunk
           </button>
         </div>
       </div>
@@ -171,9 +172,9 @@ function ConflictRow<T>({
           <thead>
             <tr className="text-ink-400 bg-bg-surface">
               <th className="text-left px-4 py-1.5 w-1/4">Field</th>
-              <th className="text-left px-3 py-1.5">Base (A)</th>
-              <th className="text-left px-3 py-1.5 text-emerald-300">Source (B)</th>
-              <th className="text-left px-3 py-1.5 text-amber-300">Target (C)</th>
+              <th className="text-left px-3 py-1.5">Branch base</th>
+              <th className="text-left px-3 py-1.5 text-emerald-300">Branch</th>
+              <th className="text-left px-3 py-1.5 text-amber-300">Trunk</th>
               <th className="text-right px-4 py-1.5 w-72">Resolve</th>
             </tr>
           </thead>
@@ -193,8 +194,8 @@ function ConflictRow<T>({
       {kind === 'modify-modify' && (
         <div className="flex items-center gap-1.5 px-4 py-2 border-t border-line/50 text-xs text-ink-400">
           <span className="mr-1">Row shortcut:</span>
-          <ShortcutBtn label="Take all B" active={rowRes === 'take-source'} onClick={() => onRow(rowRes === 'take-source' ? undefined : 'take-source')} tone="source" />
-          <ShortcutBtn label="Keep all C" active={rowRes === 'keep-target'} onClick={() => onRow(rowRes === 'keep-target' ? undefined : 'keep-target')} tone="target" />
+          <ShortcutBtn label="Take all branch" active={rowRes === 'take-source'} onClick={() => onRow(rowRes === 'take-source' ? undefined : 'take-source')} tone="source" />
+          <ShortcutBtn label="Keep all trunk" active={rowRes === 'keep-target'} onClick={() => onRow(rowRes === 'keep-target' ? undefined : 'keep-target')} tone="target" />
         </div>
       )}
     </div>
@@ -242,9 +243,9 @@ function FieldRowView({
       <td className="px-3 py-1.5 font-mono text-amber-200">{fmt(f.target)}</td>
       <td className="px-4 py-1 text-right">
         <div className="inline-flex gap-1">
-          <FieldBtn label="B" tone="source" active={chosen === 'take-source'} onClick={() => onChoose(chosen === 'take-source' ? undefined : 'take-source')} title={`Use source value: ${fmt(f.source)}`} />
-          <FieldBtn label="C" tone="target" active={chosen === 'keep-target'} onClick={() => onChoose(chosen === 'keep-target' ? undefined : 'keep-target')} title={`Keep target value: ${fmt(f.target)}`} />
-          <FieldBtn label="A" tone="base"   active={chosen === 'use-base'}     onClick={() => onChoose(chosen === 'use-base'     ? undefined : 'use-base')}     title={`Revert to baseline: ${fmt(f.base)}`} />
+          <FieldBtn label="branch" tone="source" active={chosen === 'take-source'} onClick={() => onChoose(chosen === 'take-source' ? undefined : 'take-source')} title={`Use branch's value: ${fmt(f.source)}`} />
+          <FieldBtn label="trunk"  tone="target" active={chosen === 'keep-target'} onClick={() => onChoose(chosen === 'keep-target' ? undefined : 'keep-target')} title={`Keep trunk's value: ${fmt(f.target)}`} />
+          <FieldBtn label="base"   tone="base"   active={chosen === 'use-base'}     onClick={() => onChoose(chosen === 'use-base'     ? undefined : 'use-base')}     title={`Revert to branch base: ${fmt(f.base)}`} />
         </div>
       </td>
     </tr>
@@ -263,7 +264,7 @@ function FieldBtn({
     <button
       onClick={onClick}
       title={title}
-      className={`w-7 h-7 text-xs font-semibold rounded border transition-colors ${tones[tone]}`}
+      className={`px-2 h-7 text-[11px] font-semibold rounded border transition-colors ${tones[tone]}`}
     >
       {label}
     </button>
@@ -305,20 +306,20 @@ function describeConflict(kind: ConflictKind): { text: string; bLabel: string; c
     case 'add-add':
       return {
         text: 'Both files added a row with this key. Choose which version to keep in the merged output.',
-        bLabel: 'Source (B) added', cLabel: 'Target (C) added',
-        bAction: "Take B's version", cAction: "Keep C's version"
+        bLabel: 'Branch added', cLabel: 'Trunk has its own row',
+        bAction: "Take branch's version", cAction: "Keep trunk's version"
       };
     case 'modify-delete':
       return {
-        text: 'Source (B) modified this row, but Target (C) has deleted it.',
+        text: 'Branch modified this row, but trunk has deleted it.',
         bLabel: 'B modified — would re-insert', cLabel: 'C deleted',
-        bAction: "Re-insert with B's changes", cAction: "Keep C's deletion"
+        bAction: "Re-insert with branch's changes", cAction: "Keep trunk's deletion"
       };
     case 'delete-modify':
       return {
-        text: 'Source (B) deleted this row, but Target (C) has modifications.',
+        text: 'Branch deleted this row, but trunk has its own modifications.',
         bLabel: 'B deleted', cLabel: "C's modified version",
-        bAction: 'Delete from target', cAction: "Keep C's row"
+        bAction: 'Delete from trunk', cAction: "Keep trunk's row"
       };
     case 'modify-modify':
       return {

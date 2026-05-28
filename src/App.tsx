@@ -11,7 +11,10 @@ import { ConflictsTab } from './components/ConflictsTab';
 import { diffXer, type DiffResult } from './lib/diff';
 import { summarize, type FileSummary } from './lib/summary';
 import { loadXerFromPath, saveXer, type LoadedXer } from './lib/xer';
-import { buildMergedXer, decisionCounts, emptyDecisions, type DecisionState, type Decision } from './lib/merge';
+import {
+  applyBranchToTrunk, decisionCounts, defaultDecision, emptyDecisions,
+  type DecisionState, type Decision
+} from './lib/merge';
 import {
   computeThreeWay, applyThreeWay, emptyResolutions, unresolvedCount,
   type ResolutionState, type RowResolution, type FieldResolution, type ThreeWayResult
@@ -21,9 +24,18 @@ type Tab = 'overview' | 'activities' | 'relationships' | 'wbs' | 'resources' | '
 type Category = 'activities' | 'relationships';
 
 export default function App() {
-  const [baseline, setBaseline] = useState<LoadedXer | null>(null);
-  const [revised, setRevised] = useState<LoadedXer | null>(null);
-  const [target, setTarget] = useState<LoadedXer | null>(null);
+  // Mental model:
+  //   trunk      - file the user trusts as the current truth. The merged
+  //                output starts from this and is what becomes the "new
+  //                trunk" after export.
+  //   branch     - file with proposed changes the user wants to land on trunk.
+  //   branchBase - optional. The version of trunk that branch was cut from.
+  //                When present, enables high-fidelity 3-way merge (every
+  //                change is attributable). When absent, the engine falls
+  //                back to 2-way with status-dependent defaults.
+  const [trunk, setTrunk]           = useState<LoadedXer | null>(null);
+  const [branch, setBranch]         = useState<LoadedXer | null>(null);
+  const [branchBase, setBranchBase] = useState<LoadedXer | null>(null);
   const [tab, setTab] = useState<Tab>('overview');
   const [error, setError] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<DecisionState>(() => emptyDecisions());
@@ -32,100 +44,103 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [activeDropTarget, setActiveDropTarget] = useState<DropTargetSlot | null>(null);
 
-  const baselineSummary: FileSummary | null = useMemo(
-    () => (baseline ? safeSummarize(baseline) : null),
-    [baseline]
-  );
-  const revisedSummary: FileSummary | null = useMemo(
-    () => (revised ? safeSummarize(revised) : null),
-    [revised]
-  );
+  const trunkSummary:  FileSummary | null = useMemo(() => (trunk  ? safeSummarize(trunk)  : null), [trunk]);
+  const branchSummary: FileSummary | null = useMemo(() => (branch ? safeSummarize(branch) : null), [branch]);
 
+  // The diff direction matches the merge direction: trunk -> branch.
+  // "added" means branch has it, trunk doesn't; "removed" the opposite.
   const diff: DiffResult | null = useMemo(() => {
-    if (!baseline || !revised) return null;
+    if (!trunk || !branch) return null;
     try {
       setError(null);
-      return diffXer(baseline.xer, revised.xer);
+      return diffXer(trunk.xer, branch.xer);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       return null;
     }
-  }, [baseline, revised]);
+  }, [trunk, branch]);
 
+  // 3-way: compute branchBase -> branch as the source delta, applied onto trunk.
   const threeWay: ThreeWayResult | null = useMemo(() => {
-    if (!baseline || !revised || !target) return null;
+    if (!trunk || !branch || !branchBase) return null;
     try {
-      return computeThreeWay(baseline.xer, revised.xer, target.xer);
+      return computeThreeWay(branchBase.xer, branch.xer, trunk.xer);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       return null;
     }
-  }, [baseline, revised, target]);
+  }, [trunk, branch, branchBase]);
 
   // Reset decisions / resolutions whenever the input set changes.
   useMemo(() => {
     setDecisions(emptyDecisions());
     setResolutions(emptyResolutions());
     setExportStatus(null);
-  }, [baseline?.path, revised?.path, target?.path]);
+  }, [trunk?.path, branch?.path, branchBase?.path]);
 
-  // ---------- Decision toggles (2-way) -------------------------------------
+  // ---------- 2-way decision toggles ---------------------------------------
+  //
+  // Decisions are stored sparsely: only explicit user overrides go in the
+  // Map. The "default" decision (apply for added/modified, skip for removed)
+  // is computed at read time. Toggling clears the override when the new
+  // value matches the default, so the user can fully reset to defaults.
 
-  const toggleActivityDecision = useCallback((key: string) => {
+  const toggleDecision = useCallback((category: Category, key: string) => {
     setDecisions(prev => {
-      const next: DecisionState = {
-        activities: new Map(prev.activities),
-        relationships: prev.relationships
-      };
-      const cur: Decision = next.activities.get(key) ?? 'accept';
-      next.activities.set(key, cur === 'accept' ? 'reject' : 'accept');
-      return next;
+      if (!diff) return prev;
+      const row = diff[category].rows.find(r => r.key === key);
+      if (!row) return prev;
+      const def = defaultDecision(row.status);
+      const cur = prev[category].get(key) ?? def;
+      const next: Decision = cur === 'apply' ? 'skip' : 'apply';
+      const map = new Map(prev[category]);
+      if (next === def) map.delete(key); else map.set(key, next);
+      return { ...prev, [category]: map };
     });
-  }, []);
+  }, [diff]);
 
-  const toggleRelationshipDecision = useCallback((key: string) => {
+  const bulkSetDecisions = useCallback((category: Category, keys: string[], decision: Decision) => {
     setDecisions(prev => {
-      const next: DecisionState = {
-        activities: prev.activities,
-        relationships: new Map(prev.relationships)
-      };
-      const cur: Decision = next.relationships.get(key) ?? 'accept';
-      next.relationships.set(key, cur === 'accept' ? 'reject' : 'accept');
-      return next;
+      if (!diff) return prev;
+      const map = new Map(prev[category]);
+      for (const k of keys) {
+        const row = diff[category].rows.find(r => r.key === k);
+        if (!row) continue;
+        const def = defaultDecision(row.status);
+        if (decision === def) map.delete(k); else map.set(k, decision);
+      }
+      return { ...prev, [category]: map };
     });
-  }, []);
+  }, [diff]);
 
-  const bulkSetActivityDecisions = useCallback((keys: string[], decision: Decision) => {
-    setDecisions(prev => {
-      const next: DecisionState = {
-        activities: new Map(prev.activities),
-        relationships: prev.relationships
-      };
-      for (const k of keys) next.activities.set(k, decision);
-      return next;
-    });
-  }, []);
+  // Effective decision per row (default + overrides), passed to the diff tabs
+  // so the Apply checkboxes render correctly per row status.
+  const effectiveActivityDecisions = useMemo(() => {
+    const m = new Map<string, Decision>();
+    if (!diff) return m;
+    for (const row of diff.activities.rows) {
+      if (row.status === 'unchanged') continue;
+      m.set(row.key, decisions.activities.get(row.key) ?? defaultDecision(row.status));
+    }
+    return m;
+  }, [diff, decisions.activities]);
 
-  const bulkSetRelationshipDecisions = useCallback((keys: string[], decision: Decision) => {
-    setDecisions(prev => {
-      const next: DecisionState = {
-        activities: prev.activities,
-        relationships: new Map(prev.relationships)
-      };
-      for (const k of keys) next.relationships.set(k, decision);
-      return next;
-    });
-  }, []);
+  const effectiveRelationshipDecisions = useMemo(() => {
+    const m = new Map<string, Decision>();
+    if (!diff) return m;
+    for (const row of diff.relationships.rows) {
+      if (row.status === 'unchanged') continue;
+      m.set(row.key, decisions.relationships.get(row.key) ?? defaultDecision(row.status));
+    }
+    return m;
+  }, [diff, decisions.relationships]);
 
-  // ---------- Resolution updates (3-way) -----------------------------------
+  // ---------- 3-way resolution updates -------------------------------------
 
   const setRowResolution = useCallback((category: Category, key: string, res: RowResolution | undefined) => {
     setResolutions(prev => {
       const rowMapKey = category === 'activities' ? 'activityRows' : 'relationshipRows';
-      const next: ResolutionState = {
-        ...prev,
-        [rowMapKey]: new Map(prev[rowMapKey])
-      };
+      const next: ResolutionState = { ...prev, [rowMapKey]: new Map(prev[rowMapKey]) };
       if (res === undefined) (next[rowMapKey] as Map<string, RowResolution>).delete(key);
       else (next[rowMapKey] as Map<string, RowResolution>).set(key, res);
       return next;
@@ -157,11 +172,11 @@ export default function App() {
   // ---------- Drag-and-drop ------------------------------------------------
 
   const predictedDropTarget: DropTargetSlot = useMemo(() => {
-    if (!baseline) return 'baseline';
-    if (!revised)  return 'revised';
-    if (!target)   return 'target';
-    return 'baseline'; // all filled — first drop replaces baseline
-  }, [baseline, revised, target]);
+    if (!trunk)      return 'trunk';
+    if (!branch)     return 'branch';
+    if (!branchBase) return 'branchBase';
+    return 'trunk';
+  }, [trunk, branch, branchBase]);
 
   useEffect(() => {
     let cleanup: (() => void) | null = null;
@@ -170,9 +185,9 @@ export default function App() {
     async function loadInto(slot: DropTargetSlot, path: string) {
       try {
         const loaded = await loadXerFromPath(path);
-        if (slot === 'baseline') setBaseline(loaded);
-        else if (slot === 'revised') setRevised(loaded);
-        else setTarget(loaded);
+        if (slot === 'trunk') setTrunk(loaded);
+        else if (slot === 'branch') setBranch(loaded);
+        else setBranchBase(loaded);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
@@ -183,23 +198,21 @@ export default function App() {
         const unlisten = await getCurrentWindow().onDragDropEvent(event => {
           const p = event.payload as any;
           const type: string = p?.type;
-          if (type === 'over' || type === 'enter') {
-            setActiveDropTarget(predictedDropTarget);
-          } else if (type === 'leave') {
-            setActiveDropTarget(null);
-          } else if (type === 'drop') {
+          if (type === 'over' || type === 'enter') setActiveDropTarget(predictedDropTarget);
+          else if (type === 'leave') setActiveDropTarget(null);
+          else if (type === 'drop') {
             const paths: string[] = (p.paths ?? []).filter((s: string) => s.toLowerCase().endsWith('.xer'));
             setActiveDropTarget(null);
             if (paths.length === 0) return;
             if (paths.length === 1) {
               loadInto(predictedDropTarget, paths[0]);
             } else {
-              // Fill empties in order, then baseline as a last resort.
+              // Fill empties in order: trunk, branch, branchBase.
               const slots: DropTargetSlot[] = [];
-              if (!baseline) slots.push('baseline');
-              if (!revised)  slots.push('revised');
-              if (!target)   slots.push('target');
-              while (slots.length < paths.length) slots.push('baseline');
+              if (!trunk)      slots.push('trunk');
+              if (!branch)     slots.push('branch');
+              if (!branchBase) slots.push('branchBase');
+              while (slots.length < paths.length) slots.push('trunk');
               for (let i = 0; i < Math.min(paths.length, slots.length); i++) {
                 loadInto(slots[i], paths[i]);
               }
@@ -208,42 +221,37 @@ export default function App() {
         });
         if (mounted) cleanup = unlisten;
         else unlisten();
-      } catch {
-        // outside Tauri
-      }
+      } catch { /* outside Tauri */ }
     })();
 
-    return () => {
-      mounted = false;
-      cleanup?.();
-    };
-  }, [predictedDropTarget, baseline, revised, target]);
+    return () => { mounted = false; cleanup?.(); };
+  }, [predictedDropTarget, trunk, branch, branchBase]);
 
   // ---------- Export -------------------------------------------------------
 
   async function onExport() {
     if (isExporting) return;
-    if (threeWay && baseline && revised && target) {
+    if (threeWay && trunk && branch && branchBase) {
       await onExportThreeWay();
-    } else if (diff && baseline && revised) {
+    } else if (diff && trunk && branch) {
       await onExportTwoWay();
     }
   }
 
   async function onExportTwoWay() {
-    if (!baseline || !revised || !diff) return;
+    if (!trunk || !branch || !diff) return;
     setIsExporting(true);
-    setExportStatus('Re-parsing files…');
+    setExportStatus('Applying branch changes to trunk…');
     try {
       await new Promise(r => setTimeout(r, 0));
-      const { xer: merged, stats } = buildMergedXer(baseline.text, revised.text, diff, decisions);
+      const { xer: merged, stats } = applyBranchToTrunk(trunk.text, branch.text, diff, decisions);
       setExportStatus('Choose where to save…');
       await new Promise(r => setTimeout(r, 0));
-      const defaultName = revised.fileName.replace(/\.xer$/i, '') + '-merged.xer';
+      const defaultName = trunk.fileName.replace(/\.xer$/i, '') + '-updated.xer';
       const written = await saveXer(merged, defaultName);
       if (written) {
-        const r = stats.activities.reverted + stats.relationships.reverted;
-        setExportStatus(`Saved (${r} change${r === 1 ? '' : 's'} reverted) → ${written}`);
+        const a = stats.activities.applied + stats.relationships.applied;
+        setExportStatus(`Saved (${a} change${a === 1 ? '' : 's'} applied) → ${written}`);
       } else {
         setExportStatus(null);
       }
@@ -255,17 +263,17 @@ export default function App() {
   }
 
   async function onExportThreeWay() {
-    if (!baseline || !revised || !target || !threeWay) return;
+    if (!trunk || !branch || !branchBase || !threeWay) return;
     setIsExporting(true);
-    setExportStatus('Applying changes to target…');
+    setExportStatus('Applying branch changes to trunk…');
     try {
       await new Promise(r => setTimeout(r, 0));
       const { xer: merged, stats } = applyThreeWay(
-        baseline.text, revised.text, target.text, threeWay, resolutions
+        branchBase.text, branch.text, trunk.text, threeWay, resolutions
       );
       setExportStatus('Choose where to save…');
       await new Promise(r => setTimeout(r, 0));
-      const defaultName = target.fileName.replace(/\.xer$/i, '') + '-patched.xer';
+      const defaultName = trunk.fileName.replace(/\.xer$/i, '') + '-updated.xer';
       const written = await saveXer(merged, defaultName);
       if (written) {
         setExportStatus(`Saved (${stats.applied} applied, ${stats.unresolvedConflicts} unresolved) → ${written}`);
@@ -279,37 +287,35 @@ export default function App() {
     }
   }
 
-  function swap() {
-    setBaseline(revised);
-    setRevised(baseline);
+  function swapTrunkBranch() {
+    setTrunk(branch);
+    setBranch(trunk);
   }
 
   // ---------- Derived ------------------------------------------------------
 
-  const decCounts = diff ? decisionCounts(diff, decisions) : { accepted: 0, rejected: 0 };
+  const decCounts  = diff ? decisionCounts(diff, decisions) : { apply: 0, skip: 0 };
   const unresolved = threeWay ? unresolvedCount(threeWay, resolutions) : 0;
 
   const exportSummary: ExportSummary = threeWay
     ? { threeWay: {
-        clean:      threeWay.totals.clean,
-        noOp:       threeWay.totals.noOp,
-        conflicts:  threeWay.totals.conflicts,
+        clean:     threeWay.totals.clean,
+        noOp:      threeWay.totals.noOp,
+        conflicts: threeWay.totals.conflicts,
         unresolved
       } }
-    : { twoWay: { accepted: decCounts.accepted, rejected: decCounts.rejected } };
-
-  // ---------- Render -------------------------------------------------------
+    : { twoWay: { apply: decCounts.apply, skip: decCounts.skip } };
 
   return (
     <div className="flex flex-col h-full bg-bg-base">
       <FilePickerBar
-        baseline={baseline}
-        revised={revised}
-        target={target}
-        onBaselineChange={setBaseline}
-        onRevisedChange={setRevised}
-        onTargetChange={setTarget}
-        onSwap={swap}
+        trunk={trunk}
+        branch={branch}
+        branchBase={branchBase}
+        onTrunkChange={setTrunk}
+        onBranchChange={setBranch}
+        onBranchBaseChange={setBranchBase}
+        onSwap={swapTrunkBranch}
         canExport={!!diff}
         onExport={onExport}
         isExporting={isExporting}
@@ -318,41 +324,37 @@ export default function App() {
         activeDropTarget={activeDropTarget}
       />
       <Tabs
-        tab={tab}
-        setTab={setTab}
-        diff={diff}
-        threeWay={threeWay}
+        tab={tab} setTab={setTab}
+        diff={diff} threeWay={threeWay}
         unresolved={unresolved}
-        hasFiles={!!(baseline || revised)}
+        hasFiles={!!(trunk || branch)}
       />
       {error && (
-        <div className="px-4 py-2 bg-red-500/10 text-red-300 text-sm border-b border-red-500/30">
-          {error}
-        </div>
+        <div className="px-4 py-2 bg-red-500/10 text-red-300 text-sm border-b border-red-500/30">{error}</div>
       )}
       <div className="flex-1 min-h-0 overflow-hidden">
         {tab === 'overview' && (
-          <Dashboard baseline={baselineSummary} revised={revisedSummary} diff={diff} />
+          <Dashboard trunk={trunkSummary} branch={branchSummary} diff={diff} />
         )}
-        {tab === 'activities'    && diff && (
+        {tab === 'activities' && diff && (
           <ActivitiesTab
             diff={diff.activities}
-            decisions={threeWay ? undefined : decisions.activities}
-            onToggleDecision={threeWay ? undefined : toggleActivityDecision}
-            onBulkSetDecisions={threeWay ? undefined : bulkSetActivityDecisions}
+            decisions={threeWay ? undefined : effectiveActivityDecisions}
+            onToggleDecision={threeWay ? undefined : (k => toggleDecision('activities', k))}
+            onBulkSetDecisions={threeWay ? undefined : ((keys, d) => bulkSetDecisions('activities', keys, d))}
           />
         )}
         {tab === 'relationships' && diff && (
           <RelationshipsTab
             diff={diff.relationships}
-            decisions={threeWay ? undefined : decisions.relationships}
-            onToggleDecision={threeWay ? undefined : toggleRelationshipDecision}
-            onBulkSetDecisions={threeWay ? undefined : bulkSetRelationshipDecisions}
+            decisions={threeWay ? undefined : effectiveRelationshipDecisions}
+            onToggleDecision={threeWay ? undefined : (k => toggleDecision('relationships', k))}
+            onBulkSetDecisions={threeWay ? undefined : ((keys, d) => bulkSetDecisions('relationships', keys, d))}
           />
         )}
-        {tab === 'wbs'           && diff && <WbsTab           diff={diff.wbs} />}
-        {tab === 'resources'     && diff && <ResourcesTab     diff={diff.resources} />}
-        {tab === 'calendars'     && diff && <CalendarsTab     diff={diff.calendars} />}
+        {tab === 'wbs'       && diff && <WbsTab       diff={diff.wbs} />}
+        {tab === 'resources' && diff && <ResourcesTab diff={diff.resources} />}
+        {tab === 'calendars' && diff && <CalendarsTab diff={diff.calendars} />}
         {tab === 'conflicts' && threeWay && (
           <ConflictsTab
             threeWay={threeWay}
@@ -364,7 +366,7 @@ export default function App() {
         )}
         {tab !== 'overview' && tab !== 'conflicts' && !diff && (
           <div className="p-8 text-center text-ink-400">
-            Load both Baseline and Revised XER files to see this tab.
+            Load both Trunk and Branch XER files to see this tab.
           </div>
         )}
       </div>

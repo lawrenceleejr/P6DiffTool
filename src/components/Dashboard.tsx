@@ -2,20 +2,20 @@ import type { FileSummary } from '../lib/summary';
 import type { DiffResult } from '../lib/diff';
 
 interface Props {
-  baseline: FileSummary | null;
-  revised: FileSummary | null;
+  trunk: FileSummary | null;
+  branch: FileSummary | null;
   diff: DiffResult | null;
 }
 
-export function Dashboard({ baseline, revised, diff }: Props) {
-  if (!baseline && !revised) {
+export function Dashboard({ trunk, branch, diff }: Props) {
+  if (!trunk && !branch) {
     return (
       <div className="h-full overflow-auto p-12 text-center text-ink-300">
-        <div className="text-2xl font-semibold text-ink-100 mb-2">Compare two P6 schedules</div>
+        <div className="text-2xl font-semibold text-ink-100 mb-2">Merge a branch into a trunk</div>
         <p className="text-sm text-ink-400 max-w-md mx-auto">
           Drag an <span className="font-mono text-ink-200">.xer</span> file onto the
-          Baseline or Revised slot above — or click <em>Choose</em> — to begin.
-          Once both are loaded the diff appears across the tabs.
+          Trunk or Branch slot above — or click <em>Choose</em> — to begin.
+          Optionally load a Branch base for high-fidelity 3-way merging.
         </p>
       </div>
     );
@@ -25,7 +25,7 @@ export function Dashboard({ baseline, revised, diff }: Props) {
     <div className="h-full overflow-auto">
       <div className="p-6 space-y-6">
         {diff && <DiffSummaryCards diff={diff} />}
-        <ProjectStatusTable baseline={baseline} revised={revised} />
+        <ProjectStatusTable trunk={trunk} branch={branch} />
       </div>
     </div>
   );
@@ -62,7 +62,7 @@ function DiffSummaryCards({ diff }: { diff: DiffResult }) {
   );
 }
 
-function ProjectStatusTable({ baseline, revised }: { baseline: FileSummary | null; revised: FileSummary | null }) {
+function ProjectStatusTable({ trunk, branch }: { trunk: FileSummary | null; branch: FileSummary | null }) {
   const rows: Array<{ label: string; get: (s: FileSummary) => string | number; indent?: boolean }> = [
     { label: 'Project',                get: s => s.projectShortName || '—' },
     { label: 'Data Date',              get: s => s.dataDate ?? '—' },
@@ -89,20 +89,20 @@ function ProjectStatusTable({ baseline, revised }: { baseline: FileSummary | nul
           <thead className="bg-bg-raised text-ink-300 text-xs uppercase tracking-wide">
             <tr>
               <th className="text-left px-4 py-2.5 w-1/3">Metric</th>
-              <th className="text-left px-4 py-2.5 w-1/3">Baseline</th>
-              <th className="text-left px-4 py-2.5 w-1/3">Revised</th>
+              <th className="text-left px-4 py-2.5 w-1/3">Trunk</th>
+              <th className="text-left px-4 py-2.5 w-1/3">Branch</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(r => {
-              const bv = baseline ? r.get(baseline) : null;
-              const rv = revised ? r.get(revised) : null;
-              const differs = bv != null && rv != null && String(bv) !== String(rv);
+              const tv = trunk  ? r.get(trunk)  : null;
+              const bv = branch ? r.get(branch) : null;
+              const differs = tv != null && bv != null && String(tv) !== String(bv);
               return (
                 <tr key={r.label} className={`border-t border-line ${differs ? 'bg-amber-500/5' : ''}`}>
                   <td className={`px-4 py-2 text-ink-300 ${r.indent ? 'pl-8' : ''}`}>{r.label}</td>
-                  <td className="px-4 py-2 font-mono text-ink-100">{bv ?? <span className="text-ink-500">—</span>}</td>
-                  <td className={`px-4 py-2 font-mono ${differs ? 'text-amber-300 font-semibold' : 'text-ink-100'}`}>{rv ?? <span className="text-ink-500">—</span>}</td>
+                  <td className="px-4 py-2 font-mono text-ink-100">{tv ?? <span className="text-ink-500">—</span>}</td>
+                  <td className={`px-4 py-2 font-mono ${differs ? 'text-amber-300 font-semibold' : 'text-ink-100'}`}>{bv ?? <span className="text-ink-500">—</span>}</td>
                 </tr>
               );
             })}

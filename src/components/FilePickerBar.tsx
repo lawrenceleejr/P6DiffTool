@@ -1,40 +1,38 @@
 import { useState } from 'react';
 import { pickAndLoadXER, type LoadedXer } from '../lib/xer';
 
-export type DropTargetSlot = 'baseline' | 'revised' | 'target';
+export type DropTargetSlot = 'trunk' | 'branch' | 'branchBase';
 
 export interface ExportSummary {
-  /** When in 2-way mode: apply/revert counts. */
-  twoWay?: { accepted: number; rejected: number };
-  /** When in 3-way mode: clean / no-op / unresolved-conflict counts. */
+  /** 2-way mode (trunk + branch): apply/skip counts driven by per-row defaults. */
+  twoWay?: { apply: number; skip: number };
+  /** 3-way mode (trunk + branch + branchBase): clean / no-op / conflict counts. */
   threeWay?: { clean: number; noOp: number; conflicts: number; unresolved: number };
 }
 
 interface Props {
-  baseline: LoadedXer | null;
-  revised: LoadedXer | null;
-  target: LoadedXer | null;
-  onBaselineChange: (v: LoadedXer | null) => void;
-  onRevisedChange: (v: LoadedXer | null) => void;
-  onTargetChange: (v: LoadedXer | null) => void;
+  trunk: LoadedXer | null;
+  branch: LoadedXer | null;
+  branchBase: LoadedXer | null;
+  onTrunkChange: (v: LoadedXer | null) => void;
+  onBranchChange: (v: LoadedXer | null) => void;
+  onBranchBaseChange: (v: LoadedXer | null) => void;
   onSwap: () => void;
   canExport: boolean;
   onExport: () => void;
   isExporting: boolean;
   exportStatus: string | null;
   exportSummary: ExportSummary;
-  /** Which slot the predicted drop target is, while a file is being dragged. */
   activeDropTarget: DropTargetSlot | null;
 }
 
 export function FilePickerBar({
-  baseline, revised, target,
-  onBaselineChange, onRevisedChange, onTargetChange, onSwap,
+  trunk, branch, branchBase,
+  onTrunkChange, onBranchChange, onBranchBaseChange, onSwap,
   canExport, onExport, isExporting, exportStatus, exportSummary, activeDropTarget
 }: Props) {
-  const threeWay = exportSummary.threeWay;
-  const exportLabel = threeWay ? 'Export patched target…' : 'Export merged XER…';
-  const exportDisabled = isExporting || !!(threeWay && threeWay.unresolved > 0);
+  const tw = exportSummary.threeWay;
+  const exportDisabled = isExporting || !!(tw && tw.unresolved > 0);
   return (
     <div className="border-b border-line bg-bg-surface px-4 py-3">
       <div className="flex items-center gap-3 flex-wrap">
@@ -43,37 +41,40 @@ export function FilePickerBar({
         </h1>
 
         <FileSlot
-          slot="baseline"
-          label="Baseline (A)"
-          value={baseline}
-          onChange={onBaselineChange}
-          highlighted={activeDropTarget === 'baseline'}
+          slot="trunk"
+          label="Trunk"
+          tooltip="The file you trust as the current source of truth. The merged output starts from this and becomes the new trunk."
+          value={trunk}
+          onChange={onTrunkChange}
+          highlighted={activeDropTarget === 'trunk'}
         />
 
         <button
           onClick={onSwap}
-          disabled={!baseline && !revised}
+          disabled={!trunk && !branch}
           className="px-2 py-1.5 text-sm rounded-md border border-line bg-bg-raised hover:bg-bg-hover disabled:opacity-30 disabled:cursor-not-allowed text-ink-200 transition-colors"
-          title="Swap baseline and revised"
+          title="Swap trunk and branch"
         >
           ⇄
         </button>
 
         <FileSlot
-          slot="revised"
-          label="Revised (B)"
-          value={revised}
-          onChange={onRevisedChange}
-          highlighted={activeDropTarget === 'revised'}
+          slot="branch"
+          label="Branch"
+          tooltip="The file with proposed changes that should land on the trunk."
+          value={branch}
+          onChange={onBranchChange}
+          highlighted={activeDropTarget === 'branch'}
         />
 
         <FileSlot
-          slot="target"
-          label="Target (C)"
+          slot="branchBase"
+          label="Branch base"
+          tooltip="Optional. The trunk version the branch was cut from. Supplying this enables high-fidelity 3-way merging with conflict detection."
           optional
-          value={target}
-          onChange={onTargetChange}
-          highlighted={activeDropTarget === 'target'}
+          value={branchBase}
+          onChange={onBranchBaseChange}
+          highlighted={activeDropTarget === 'branchBase'}
         />
 
         <div className="ml-auto flex items-center gap-3 text-xs text-ink-300">
@@ -83,31 +84,30 @@ export function FilePickerBar({
           {canExport && (
             <>
               <span className="mx-1 h-4 w-px bg-line-strong" />
-              {threeWay ? (
+              {tw ? (
                 <span className="text-ink-300">
-                  3-way · <b className="text-emerald-300">{threeWay.clean}</b> clean ·{' '}
-                  <b className="text-ink-300">{threeWay.noOp}</b> no-op ·{' '}
-                  <b className={threeWay.unresolved > 0 ? 'text-amber-300' : 'text-ink-300'}>
-                    {threeWay.unresolved}/{threeWay.conflicts}
+                  3-way · <b className="text-emerald-300">{tw.clean}</b> clean ·{' '}
+                  <b className="text-ink-300">{tw.noOp}</b> no-op ·{' '}
+                  <b className={tw.unresolved > 0 ? 'text-amber-300' : 'text-ink-300'}>
+                    {tw.unresolved}/{tw.conflicts}
                   </b> unresolved
                 </span>
               ) : exportSummary.twoWay && (
-                <span className="text-ink-300">
-                  <b className="text-ink-50">{exportSummary.twoWay.accepted}</b> apply ·{' '}
-                  <b className="text-ink-50">{exportSummary.twoWay.rejected}</b> revert
+                <span className="text-ink-300" title="In 2-way mode, branch-removed rows default to skip to protect trunk data — load a Branch base for unambiguous 3-way merging.">
+                  2-way · <b className="text-ink-50">{exportSummary.twoWay.apply}</b> apply ·{' '}
+                  <b className="text-ink-50">{exportSummary.twoWay.skip}</b> skip
                 </span>
               )}
               <button
                 onClick={onExport}
                 disabled={exportDisabled}
                 className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium rounded-md bg-accent text-accent-ink hover:bg-accent-hover transition-colors shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
-                title={threeWay && threeWay.unresolved > 0
-                  ? `Resolve ${threeWay.unresolved} conflict${threeWay.unresolved === 1 ? '' : 's'} in the Conflicts tab first`
-                  : threeWay ? 'Apply A→B onto Target and save'
-                  : 'Save a merged XER reflecting your accept/reject decisions'}
+                title={tw && tw.unresolved > 0
+                  ? `Resolve ${tw.unresolved} conflict${tw.unresolved === 1 ? '' : 's'} in the Conflicts tab first`
+                  : 'Save an updated trunk with the chosen branch changes applied'}
               >
                 {isExporting && <Spinner />}
-                {isExporting ? 'Exporting…' : exportLabel}
+                {isExporting ? 'Exporting…' : 'Export updated trunk…'}
               </button>
             </>
           )}
@@ -126,10 +126,11 @@ export function FilePickerBar({
 }
 
 function FileSlot({
-  slot, label, value, onChange, highlighted, optional
+  slot, label, tooltip, value, onChange, highlighted, optional
 }: {
   slot: DropTargetSlot;
   label: string;
+  tooltip: string;
   value: LoadedXer | null;
   onChange: (v: LoadedXer | null) => void;
   highlighted: boolean;
@@ -151,7 +152,7 @@ function FileSlot({
     }
   }
 
-  const btnLabel = busy ? 'Loading…' : value ? 'Change…' : optional ? '+ Target' : `Choose ${label.split(' ')[0]}`;
+  const btnLabel = busy ? 'Loading…' : value ? 'Change…' : optional ? `+ ${label}` : `Choose ${label}`;
 
   return (
     <div
@@ -162,9 +163,7 @@ function FileSlot({
         onClick={pick}
         disabled={busy}
         className={`px-3 py-1.5 text-sm font-medium rounded-md border transition-colors ${optional && !value ? 'border-line/60 bg-bg-base hover:bg-bg-hover text-ink-300 border-dashed' : 'border-line bg-bg-raised hover:bg-bg-hover text-ink-100'} disabled:opacity-50`}
-        title={optional && !value
-          ? 'Optional: load a third file to apply A→B onto a different schedule (3-way merge)'
-          : 'Click to choose, or drag an .xer file anywhere on this bar'}
+        title={tooltip}
       >
         {value || !optional ? <><span className="text-ink-300 mr-1.5">{label}:</span>{btnLabel}</> : btnLabel}
       </button>

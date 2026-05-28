@@ -3,13 +3,26 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { XER } from 'xer-parser';
 import { diffXer } from '../diff';
-import { buildMergedXer, emptyDecisions, type DecisionState } from '../merge';
+import {
+  applyBranchToTrunk, emptyDecisions, defaultDecision, decisionCounts,
+  type DecisionState
+} from '../merge';
+
+// In the 2-way model:
+//   trunk  (this file is treated as the source of truth - output starts from it)
+//   branch (this file has the proposed changes that may land on the trunk)
+// For these tests we use sample-baseline.xer as trunk and sample-revised.xer
+// as branch. The diff has added=A1015, removed=A2020, modified=A1010 +
+// A2000 + A3000. With *default* decisions:
+//   - A1015 (added)   -> apply  (default for 'added')
+//   - A2020 (removed) -> skip   (default for 'removed' — protects trunk data)
+//   - A1010/A2000/A3000 (modified) -> apply (default for 'modified')
 
 function load() {
   const root = resolve(__dirname, '../../..');
-  const oldText = readFileSync(resolve(root, 'test-data/sample-baseline.xer'), 'utf8');
-  const newText = readFileSync(resolve(root, 'test-data/sample-revised.xer'), 'utf8');
-  return { oldText, newText, oldXer: new XER(oldText), newXer: new XER(newText) };
+  const trunkText  = readFileSync(resolve(root, 'test-data/sample-baseline.xer'), 'utf8');
+  const branchText = readFileSync(resolve(root, 'test-data/sample-revised.xer'),  'utf8');
+  return { trunkText, branchText, trunk: new XER(trunkText), branch: new XER(branchText) };
 }
 
 function activityKey(diff: ReturnType<typeof diffXer>, code: string): string {
@@ -24,139 +37,131 @@ function relationshipKey(diff: ReturnType<typeof diffXer>, pred: string, succ: s
   return row.key;
 }
 
-function reject(state: DecisionState, kind: 'activities' | 'relationships', key: string) {
-  state[kind].set(key, 'reject');
+function override(state: DecisionState, kind: 'activities' | 'relationships', key: string, d: 'apply' | 'skip') {
+  state[kind].set(key, d);
 }
 
 function findTask(xer: XER, code: string) {
   return [...xer.tasks].find(t => t.taskCode === code);
 }
 
-describe('buildMergedXer — default (all accepted) reproduces the revised file', () => {
-  it('produces a merged XER whose diff against revised is empty', () => {
-    const { oldText, newText, newXer } = load();
-    const diff = diffXer(new XER(oldText), newXer);
-    const { xer: merged, stats } = buildMergedXer(oldText, newText, diff, emptyDecisions());
-    expect(stats.activities.rejected).toBe(0);
-    expect(stats.relationships.rejected).toBe(0);
-    const reDiff = diffXer(merged, newXer);
-    expect(reDiff.activities.counts.added).toBe(0);
-    expect(reDiff.activities.counts.removed).toBe(0);
-    expect(reDiff.activities.counts.modified).toBe(0);
-    expect(reDiff.relationships.counts.added).toBe(0);
-    expect(reDiff.relationships.counts.removed).toBe(0);
-    expect(reDiff.relationships.counts.modified).toBe(0);
-  });
+describe('defaultDecision — per-status defaults', () => {
+  it('added defaults to apply', () => expect(defaultDecision('added')).toBe('apply'));
+  it('modified defaults to apply', () => expect(defaultDecision('modified')).toBe('apply'));
+  it('removed defaults to skip (protect trunk)', () => expect(defaultDecision('removed')).toBe('skip'));
 });
 
-describe('buildMergedXer — reverting a modified activity', () => {
-  it('restores A1010 original duration when rejected', () => {
-    const { oldText, newText, oldXer, newXer } = load();
-    const diff = diffXer(oldXer, newXer);
-    const decisions = emptyDecisions();
-    reject(decisions, 'activities', activityKey(diff, 'A1010'));
-    const { xer: merged, stats } = buildMergedXer(oldText, newText, diff, decisions);
-    expect(stats.activities.rejected).toBe(1);
-    expect(stats.activities.reverted).toBe(1);
-    const a1010 = findTask(merged, 'A1010');
-    expect(a1010).toBeDefined();
-    expect(a1010!.targetDrtn.hours).toBe(40);  // baseline value, not revised 48
+describe('applyBranchToTrunk — defaults', () => {
+  const { trunkText, branchText, trunk, branch } = load();
+  const diff = diffXer(trunk, branch);
+
+  it('adds A1015 from branch (default apply)', () => {
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
+    const a1015 = findTask(merged, 'A1015');
+    expect(a1015).toBeDefined();
+    expect(a1015!.taskName).toBe('Design HVAC');
   });
 
-  it('restores A2000 original name and start when rejected', () => {
-    const { oldText, newText, oldXer, newXer } = load();
-    const diff = diffXer(oldXer, newXer);
-    const decisions = emptyDecisions();
-    reject(decisions, 'activities', activityKey(diff, 'A2000'));
-    const { xer: merged } = buildMergedXer(oldText, newText, diff, decisions);
-    const a2000 = findTask(merged, 'A2000');
-    expect(a2000).toBeDefined();
-    expect(a2000!.taskName).toBe('Pour Foundation');
-    expect(a2000!.targetStartDate.format('YYYY-MM-DD')).toBe('2026-04-15');
-  });
-
-  it('restores A3000 status to TK_NotStart when rejected', () => {
-    const { oldText, newText, oldXer, newXer } = load();
-    const diff = diffXer(oldXer, newXer);
-    const decisions = emptyDecisions();
-    reject(decisions, 'activities', activityKey(diff, 'A3000'));
-    const { xer: merged } = buildMergedXer(oldText, newText, diff, decisions);
-    const a3000 = findTask(merged, 'A3000');
-    expect(a3000!.statusCode).toBe('TK_NotStart');
-  });
-});
-
-describe('buildMergedXer — reverting an added activity removes it', () => {
-  it('drops A1015 (Design HVAC) from the merged output when rejected', () => {
-    const { oldText, newText, oldXer, newXer } = load();
-    const diff = diffXer(oldXer, newXer);
-    const decisions = emptyDecisions();
-    reject(decisions, 'activities', activityKey(diff, 'A1015'));
-    const { xer: merged, stats } = buildMergedXer(oldText, newText, diff, decisions);
-    expect(stats.activities.reverted).toBe(1);
-    expect(findTask(merged, 'A1015')).toBeUndefined();
-  });
-});
-
-describe('buildMergedXer — reverting a removed activity re-inserts it', () => {
-  it('puts A2020 (Install Roof) back into the merged output when rejected', () => {
-    const { oldText, newText, oldXer, newXer } = load();
-    const diff = diffXer(oldXer, newXer);
-    const decisions = emptyDecisions();
-    reject(decisions, 'activities', activityKey(diff, 'A2020'));
-    const { xer: merged, stats } = buildMergedXer(oldText, newText, diff, decisions);
-    expect(stats.activities.reverted).toBe(1);
+  it('keeps A2020 in trunk (default skip on removed)', () => {
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
     const a2020 = findTask(merged, 'A2020');
     expect(a2020).toBeDefined();
     expect(a2020!.taskName).toBe('Install Roof');
-    expect(a2020!.targetDrtn.hours).toBe(32);
+  });
+
+  it('applies modifications (A1010 duration 40 -> 48, A2000 rename, A3000 status)', () => {
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
+    expect(findTask(merged, 'A1010')!.targetDrtn.hours).toBe(48);
+    expect(findTask(merged, 'A2000')!.taskName).toBe('Pour Foundation (Slab)');
+    expect(findTask(merged, 'A3000')!.statusCode).toBe('TK_Active');
+  });
+
+  it('produces 9 activities (8 trunk + 1 branch-added)', () => {
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
+    expect(merged.tasks.length).toBe(9);
   });
 });
 
-describe('buildMergedXer — reverting relationship changes', () => {
-  it('clears the 8-hr lag added to A1010 -> A1020 when rejected', () => {
-    const { oldText, newText, oldXer, newXer } = load();
-    const diff = diffXer(oldXer, newXer);
+describe('applyBranchToTrunk — overrides', () => {
+  const { trunkText, branchText, trunk, branch } = load();
+  const diff = diffXer(trunk, branch);
+
+  it("skip on A1015 (added) doesn't bring the new activity in", () => {
     const decisions = emptyDecisions();
-    reject(decisions, 'relationships', relationshipKey(diff, 'A1010', 'A1020'));
-    const { xer: merged } = buildMergedXer(oldText, newText, diff, decisions);
+    override(decisions, 'activities', activityKey(diff, 'A1015'), 'skip');
+    const { xer: merged, stats } = applyBranchToTrunk(trunkText, branchText, diff, decisions);
+    expect(findTask(merged, 'A1015')).toBeUndefined();
+    expect(stats.activities.skipped).toBeGreaterThan(0);
+  });
+
+  it('apply on A2020 (removed) deletes it from trunk', () => {
+    const decisions = emptyDecisions();
+    override(decisions, 'activities', activityKey(diff, 'A2020'), 'apply');
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, decisions);
+    expect(findTask(merged, 'A2020')).toBeUndefined();
+  });
+
+  it("skip on A1010 (modified) leaves trunk's duration unchanged", () => {
+    const decisions = emptyDecisions();
+    override(decisions, 'activities', activityKey(diff, 'A1010'), 'skip');
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, decisions);
+    expect(findTask(merged, 'A1010')!.targetDrtn.hours).toBe(40);
+  });
+
+  it('applies the 8 hr lag on A1010 -> A1020 by default', () => {
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
     const tp = [...merged.taskPredecessors].find(p => {
       const pred = merged.taskById.get((p as any).predTaskId);
       const succ = merged.taskById.get((p as any).taskId);
       return pred?.taskCode === 'A1010' && succ?.taskCode === 'A1020';
     });
     expect(tp).toBeDefined();
-    expect((tp as any).lag.hours).toBe(0);  // baseline lag was 0
+    expect((tp as any).lag.hours).toBe(8);
   });
 
-  it('drops the added A2010 -> A3000 relationship when rejected', () => {
-    const { oldText, newText, oldXer, newXer } = load();
-    const diff = diffXer(oldXer, newXer);
+  it('skip on the lag change keeps trunk\'s 0 hr lag', () => {
     const decisions = emptyDecisions();
-    reject(decisions, 'relationships', relationshipKey(diff, 'A2010', 'A3000'));
-    const { xer: merged } = buildMergedXer(oldText, newText, diff, decisions);
+    override(decisions, 'relationships', relationshipKey(diff, 'A1010', 'A1020'), 'skip');
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, decisions);
     const tp = [...merged.taskPredecessors].find(p => {
       const pred = merged.taskById.get((p as any).predTaskId);
       const succ = merged.taskById.get((p as any).taskId);
-      return pred?.taskCode === 'A2010' && succ?.taskCode === 'A3000';
+      return pred?.taskCode === 'A1010' && succ?.taskCode === 'A1020';
     });
-    expect(tp).toBeUndefined();
+    expect((tp as any).lag.hours).toBe(0);
   });
 });
 
-describe('buildMergedXer — round-trip serialization stays valid', () => {
-  it('serialized merged XER re-parses cleanly', () => {
-    const { oldText, newText, oldXer, newXer } = load();
-    const diff = diffXer(oldXer, newXer);
+describe('decisionCounts — sparse map + status-aware defaults', () => {
+  const { trunk, branch } = load();
+  const diff = diffXer(trunk, branch);
+
+  it('counts the right number of applies vs skips at defaults', () => {
+    const { apply, skip } = decisionCounts(diff, emptyDecisions());
+    // 1 added (apply) + 1 removed (skip) + 3 modified-activities (apply) +
+    // 2 added-rels (apply) + 2 removed-rels (skip) + 1 modified-rel (apply)
+    expect(apply).toBe(1 + 3 + 2 + 1);
+    expect(skip).toBe(1 + 2);
+  });
+
+  it('flipping an override changes the count', () => {
     const decisions = emptyDecisions();
-    reject(decisions, 'activities', activityKey(diff, 'A1010'));
-    reject(decisions, 'activities', activityKey(diff, 'A1015'));
-    reject(decisions, 'activities', activityKey(diff, 'A2020'));
-    const { xer: merged } = buildMergedXer(oldText, newText, diff, decisions);
+    override(decisions, 'activities', activityKey(diff, 'A1015'), 'skip');
+    const after = decisionCounts(diff, decisions);
+    const before = decisionCounts(diff, emptyDecisions());
+    expect(after.skip).toBe(before.skip + 1);
+    expect(after.apply).toBe(before.apply - 1);
+  });
+});
+
+describe('applyBranchToTrunk — round-trip', () => {
+  it('serialized merged XER re-parses cleanly', () => {
+    const { trunkText, branchText, trunk, branch } = load();
+    const diff = diffXer(trunk, branch);
+    const { xer: merged } = applyBranchToTrunk(trunkText, branchText, diff, emptyDecisions());
     const text = merged.toXERString({ lineEnding: '\r\n' as unknown as '\\r\\n' });
     expect(text).toMatch(/^ERMHDR/);
     expect(text.trim().endsWith('%E')).toBe(true);
-    const reparsed = new XER(text);
-    expect(reparsed.tasks.length).toBe(merged.tasks.length);
+    expect(new XER(text).tasks.length).toBe(merged.tasks.length);
   });
 });

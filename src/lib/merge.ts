@@ -1,19 +1,28 @@
-// V2 merge engine. Takes the diff plus a per-row decision map and produces a
-// merged XER: start from a fresh parse of the revised text (so the "default"
-// state = revised), then for every rejected change, revert that row back to
-// the baseline's value.
+// 2-way merge engine: apply a branch's changes onto a trunk.
 //
-// Why re-parse instead of clone: xer-parser doesn't expose deep clone, and
-// re-parsing is cheap, deterministic, and guaranteed isolated from the live
-// in-memory XER objects bound to UI state.
+// Mental model:
+//   trunk   - current "source of truth"; the merged output starts from this
+//   branch  - file with proposed changes
+//   output  - trunk with branch's accepted changes applied
+//
+// Without a "branch base" (the older trunk version branch was cut from),
+// we can't prove provenance: a row in trunk but not in branch could be
+// either "branch deleted it" or "trunk added it later." Defaults reflect
+// that uncertainty by protecting trunk data:
+//
+//   added in branch    -> apply by default (bring branch's new row in)
+//   removed in branch  -> skip  by default (keep trunk's row, safer)
+//   modified in branch -> apply by default (use branch's values)
+//
+// The user can override per row in the Activities / Logic Apply column,
+// or load a branch base for the high-fidelity 3-way engine.
 
 import { XER } from 'xer-parser';
-import type { DiffResult, DiffRow, ActivityRecord, RelationshipRecord } from './diff';
+import type { DiffResult, DiffRow, ActivityRecord, RelationshipRecord, ChangeStatus } from './diff';
 
-export type Decision = 'accept' | 'reject';
+export type Decision = 'apply' | 'skip';
 
 export interface DecisionState {
-  /** Map of DiffRow.key -> decision. Missing key = default = 'accept'. */
   activities: Map<string, Decision>;
   relationships: Map<string, Decision>;
 }
@@ -22,81 +31,76 @@ export function emptyDecisions(): DecisionState {
   return { activities: new Map(), relationships: new Map() };
 }
 
+/** Default action per change status. Removes protect trunk data by default. */
+export function defaultDecision(status: ChangeStatus): Decision {
+  return status === 'removed' ? 'skip' : 'apply';
+}
+
 export interface MergeStats {
-  activities: { reverted: number; rejected: number; total: number };
-  relationships: { reverted: number; rejected: number; total: number };
+  activities:    { applied: number; skipped: number; total: number };
+  relationships: { applied: number; skipped: number; total: number };
 }
 
 const TASK_FIELD_TO_COLUMN: Record<string, string> = {
-  name: 'task_name',
-  type: 'task_type',
-  status: 'status_code',
+  name: 'task_name', type: 'task_type', status: 'status_code',
   pctComplete: 'phys_complete_pct',
   originalDurationHrs: 'target_drtn_hr_cnt',
   remainingDurationHrs: 'remain_drtn_hr_cnt',
-  targetStart: 'target_start_date',
-  targetFinish: 'target_end_date',
-  actualStart: 'act_start_date',
-  actualFinish: 'act_end_date',
-  totalFloatHrs: 'total_float_hr_cnt',
-  freeFloatHrs: 'free_float_hr_cnt',
-  constraintType: 'cstr_type',
-  constraintDate: 'cstr_date'
+  targetStart: 'target_start_date', targetFinish: 'target_end_date',
+  actualStart: 'act_start_date',    actualFinish: 'act_end_date',
+  totalFloatHrs: 'total_float_hr_cnt', freeFloatHrs: 'free_float_hr_cnt',
+  constraintType: 'cstr_type',         constraintDate: 'cstr_date'
 };
 
-const RELATIONSHIP_FIELD_TO_COLUMN: Record<string, string> = {
+const REL_FIELD_TO_COLUMN: Record<string, string> = {
   lagHrs: 'lag_hr_cnt'
 };
 
-export function buildMergedXer(
-  oldText: string,
-  newText: string,
+/** Build a merged XER by starting from the trunk and selectively applying
+ * the (trunk -> branch) diff. Decisions override the per-status defaults. */
+export function applyBranchToTrunk(
+  trunkText: string,
+  branchText: string,
   diff: DiffResult,
   decisions: DecisionState
 ): { xer: XER; stats: MergeStats } {
-  const merged = new XER(newText);
-  const oldXer = new XER(oldText);
+  const merged    = new XER(trunkText);    // start from trunk
+  const branchXer = new XER(branchText);
   const stats: MergeStats = {
-    activities: { reverted: 0, rejected: 0, total: 0 },
-    relationships: { reverted: 0, rejected: 0, total: 0 }
+    activities:    { applied: 0, skipped: 0, total: 0 },
+    relationships: { applied: 0, skipped: 0, total: 0 }
   };
 
   for (const row of diff.activities.rows) {
     if (row.status === 'unchanged') continue;
     stats.activities.total += 1;
-    const decision = decisions.activities.get(row.key) ?? 'accept';
-    if (decision === 'accept') continue;
-    stats.activities.rejected += 1;
-    if (revertActivity(merged, oldXer, row)) stats.activities.reverted += 1;
+    const decision = decisions.activities.get(row.key) ?? defaultDecision(row.status);
+    if (decision === 'skip') { stats.activities.skipped += 1; continue; }
+    if (applyActivity(merged, branchXer, row)) stats.activities.applied += 1;
+    else stats.activities.skipped += 1;
   }
 
   for (const row of diff.relationships.rows) {
     if (row.status === 'unchanged') continue;
     stats.relationships.total += 1;
-    const decision = decisions.relationships.get(row.key) ?? 'accept';
-    if (decision === 'accept') continue;
-    stats.relationships.rejected += 1;
-    if (revertRelationship(merged, oldXer, row)) stats.relationships.reverted += 1;
+    const decision = decisions.relationships.get(row.key) ?? defaultDecision(row.status);
+    if (decision === 'skip') { stats.relationships.skipped += 1; continue; }
+    if (applyRelationship(merged, branchXer, row)) stats.relationships.applied += 1;
+    else stats.relationships.skipped += 1;
   }
 
   merged.refreshEntities();
   return { xer: merged, stats };
 }
 
-function revertActivity(merged: XER, oldXer: XER, row: DiffRow<ActivityRecord>): boolean {
+function applyActivity(merged: XER, branchXer: XER, row: DiffRow<ActivityRecord>): boolean {
   if (row.status === 'added' && row.new) {
-    const t = findTaskByCode(merged, row.new.activityId);
-    if (!t) return false;
-    return merged.deleteTaskRow(t.taskId);
+    if (findTaskByCode(merged, row.new.activityId)) return false;
+    return insertTaskFromBranch(merged, branchXer, row.new);
   }
   if (row.status === 'removed' && row.old) {
-    if (findTaskByCode(merged, row.old.activityId)) return false;
-    const values = readTaskRow(oldXer, row.old.activityId);
-    if (!values) return false;
-    values.task_id = String(nextTaskId(merged));
-    retargetProjId(merged, values);
-    merged.insertTaskRow(values);
-    return true;
+    const t = findTaskByCode(merged, row.old.activityId);
+    return t ? merged.deleteTaskRow(t.taskId) : false;
   }
   if (row.status === 'modified' && row.new) {
     const t = findTaskByCode(merged, row.new.activityId);
@@ -104,49 +108,63 @@ function revertActivity(merged: XER, oldXer: XER, row: DiffRow<ActivityRecord>):
     const patch: Record<string, string | number> = {};
     for (const f of row.fields) {
       const col = TASK_FIELD_TO_COLUMN[f.field];
-      if (col) patch[col] = formatXerValue(f.oldValue);
+      if (col) patch[col] = formatXerValue(f.newValue);
     }
-    if (Object.keys(patch).length === 0) return false;
-    return merged.updateTaskRow(t.taskId, patch);
+    return Object.keys(patch).length > 0 && merged.updateTaskRow(t.taskId, patch);
   }
   return false;
 }
 
-function revertRelationship(merged: XER, oldXer: XER, row: DiffRow<RelationshipRecord>): boolean {
+function applyRelationship(merged: XER, branchXer: XER, row: DiffRow<RelationshipRecord>): boolean {
   if (row.status === 'added' && row.new) {
-    const tp = findRelationship(merged, row.new.predecessorId, row.new.successorId, row.new.type);
-    if (!tp) return false;
-    return merged.deleteTaskPredecessorRow(tp.taskPredId);
+    if (findRelationship(merged, row.new.predecessorId, row.new.successorId, row.new.type)) return false;
+    return insertRelFromBranch(merged, branchXer, row.new);
   }
   if (row.status === 'removed' && row.old) {
-    if (findRelationship(merged, row.old.predecessorId, row.old.successorId, row.old.type)) return false;
-    const succ = findTaskByCode(merged, row.old.successorId);
-    const pred = findTaskByCode(merged, row.old.predecessorId);
-    if (!succ || !pred) return false;
-    const values = readRelationshipRow(oldXer, row.old.predecessorId, row.old.successorId, row.old.type);
-    if (!values) return false;
-    values.task_pred_id = String(nextRelId(merged));
-    values.task_id = String(succ.taskId);
-    values.pred_task_id = String(pred.taskId);
-    retargetRelProjId(merged, values);
-    merged.insertTaskPredecessorRow(values);
-    return true;
+    const tp = findRelationship(merged, row.old.predecessorId, row.old.successorId, row.old.type);
+    return tp ? merged.deleteTaskPredecessorRow(tp.taskPredId) : false;
   }
   if (row.status === 'modified' && row.new) {
     const tp = findRelationship(merged, row.new.predecessorId, row.new.successorId, row.new.type);
     if (!tp) return false;
     const patch: Record<string, string | number> = {};
     for (const f of row.fields) {
-      const col = RELATIONSHIP_FIELD_TO_COLUMN[f.field];
-      if (col) patch[col] = formatXerValue(f.oldValue);
+      const col = REL_FIELD_TO_COLUMN[f.field];
+      if (col) patch[col] = formatXerValue(f.newValue);
     }
-    if (Object.keys(patch).length === 0) return false;
-    return merged.updateTaskPredecessorRow(tp.taskPredId, patch);
+    return Object.keys(patch).length > 0 && merged.updateTaskPredecessorRow(tp.taskPredId, patch);
   }
   return false;
 }
 
-// ---- Lookups ----------------------------------------------------------------
+// ---- Insert helpers (copy raw row from branch, remap ids) ------------------
+
+function insertTaskFromBranch(merged: XER, branchXer: XER, rec: ActivityRecord): boolean {
+  const t = findTaskByCode(branchXer, rec.activityId);
+  if (!t) return false;
+  const values = readRow(branchXer, 'TASK', 'task_id', t.taskId);
+  if (!values) return false;
+  values.task_id = String(nextTaskId(merged));
+  retargetProjId(merged, values);
+  merged.insertTaskRow(values);
+  return true;
+}
+
+function insertRelFromBranch(merged: XER, branchXer: XER, rec: RelationshipRecord): boolean {
+  const tp = findRelationship(branchXer, rec.predecessorId, rec.successorId, rec.type);
+  if (!tp) return false;
+  const succ = findTaskByCode(merged, rec.successorId);
+  const pred = findTaskByCode(merged, rec.predecessorId);
+  if (!succ || !pred) return false;
+  const values = readRow(branchXer, 'TASKPRED', 'task_pred_id', tp.taskPredId);
+  if (!values) return false;
+  values.task_pred_id = String(nextRelId(merged));
+  values.task_id      = String(succ.taskId);
+  values.pred_task_id = String(pred.taskId);
+  retargetRelProjId(merged, values);
+  merged.insertTaskPredecessorRow(values);
+  return true;
+}
 
 function findTaskByCode(xer: XER, taskCode: string): any | undefined {
   for (const t of xer.tasks) if (t.taskCode === taskCode) return t;
@@ -162,33 +180,7 @@ function findRelationship(xer: XER, predCode: string, succCode: string, type: st
   return undefined;
 }
 
-function readTaskRow(xer: XER, taskCode: string): Record<string, string> | undefined {
-  const t = findTaskByCode(xer, taskCode);
-  if (!t) return undefined;
-  return readRawRowById(xer, 'TASK', 'task_id', t.taskId);
-}
-
-/** Override the proj_id on a row being inserted so the new row belongs to
- * the merged file's project, not the source file's. */
-function retargetProjId(merged: XER, values: Record<string, string>) {
-  if (merged.projects.length === 0) return;
-  values.proj_id = String(merged.projects[0].projId);
-}
-
-function retargetRelProjId(merged: XER, values: Record<string, string>) {
-  if (merged.projects.length === 0) return;
-  const projId = String(merged.projects[0].projId);
-  values.proj_id = projId;
-  values.pred_proj_id = projId;
-}
-
-function readRelationshipRow(xer: XER, predCode: string, succCode: string, type: string): Record<string, string> | undefined {
-  const tp = findRelationship(xer, predCode, succCode, type);
-  if (!tp) return undefined;
-  return readRawRowById(xer, 'TASKPRED', 'task_pred_id', tp.taskPredId);
-}
-
-function readRawRowById(xer: XER, tableName: string, idColumn: string, id: number): Record<string, string> | undefined {
+function readRow(xer: XER, tableName: string, idColumn: string, id: number): Record<string, string> | undefined {
   const tbl = xer.tables.find(t => t.name === tableName);
   if (!tbl) return undefined;
   const idIdx = tbl.header.indexOf(idColumn);
@@ -219,6 +211,18 @@ function nextRelId(xer: XER): number {
   return max + 1;
 }
 
+function retargetProjId(merged: XER, values: Record<string, string>) {
+  if (merged.projects.length === 0) return;
+  values.proj_id = String(merged.projects[0].projId);
+}
+
+function retargetRelProjId(merged: XER, values: Record<string, string>) {
+  if (merged.projects.length === 0) return;
+  const projId = String(merged.projects[0].projId);
+  values.proj_id      = projId;
+  values.pred_proj_id = projId;
+}
+
 function formatXerValue(v: unknown): string | number {
   if (v == null || v === '') return '';
   if (typeof v === 'number') return v;
@@ -226,26 +230,19 @@ function formatXerValue(v: unknown): string | number {
   return String(v);
 }
 
-// ---- Summary ----------------------------------------------------------------
+// ---- UI helpers ------------------------------------------------------------
 
-export function changeCounts(diff: DiffResult): { activities: number; relationships: number; total: number } {
-  let a = 0, r = 0;
-  for (const row of diff.activities.rows) if (row.status !== 'unchanged') a++;
-  for (const row of diff.relationships.rows) if (row.status !== 'unchanged') r++;
-  return { activities: a, relationships: r, total: a + r };
-}
-
-export function decisionCounts(diff: DiffResult, decisions: DecisionState): { accepted: number; rejected: number } {
-  let accepted = 0, rejected = 0;
+export function decisionCounts(diff: DiffResult, decisions: DecisionState): { apply: number; skip: number } {
+  let apply = 0, skip = 0;
   for (const row of diff.activities.rows) {
     if (row.status === 'unchanged') continue;
-    if ((decisions.activities.get(row.key) ?? 'accept') === 'accept') accepted++;
-    else rejected++;
+    const d = decisions.activities.get(row.key) ?? defaultDecision(row.status);
+    if (d === 'apply') apply++; else skip++;
   }
   for (const row of diff.relationships.rows) {
     if (row.status === 'unchanged') continue;
-    if ((decisions.relationships.get(row.key) ?? 'accept') === 'accept') accepted++;
-    else rejected++;
+    const d = decisions.relationships.get(row.key) ?? defaultDecision(row.status);
+    if (d === 'apply') apply++; else skip++;
   }
-  return { accepted, rejected };
+  return { apply, skip };
 }

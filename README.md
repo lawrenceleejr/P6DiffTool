@@ -1,15 +1,18 @@
 # P6 Diff Tool
 
-A cross-platform desktop app (macOS, Windows, Linux) that loads two
-**Primavera P6 XER** schedule exports, shows a clear color-coded diff, and
-lets you cherry-pick which changes to carry forward into an exported merged
-XER file.
+A cross-platform desktop app (macOS, Windows, Linux) for comparing and
+merging **Primavera P6 XER** schedule files. You hand it a **trunk** (the
+file you trust as the current source of truth) and a **branch** (a file
+with proposed changes). It shows a color-coded diff and lets you
+cherry-pick which branch changes to land on the trunk; the export is a
+new XER that becomes the updated trunk. Optionally supply a **branch
+base** (the trunk version the branch was cut from) for high-fidelity
+3-way merging with conflict detection.
 
-There is no good open-source tool for comparing two P6 schedules. Schedulers
-typically resort to clunky paid tools or manual spreadsheet gymnastics to
-answer simple questions like *"what changed between baseline and revised?"*
-or *"can I take just these few changes without the rest?"* — this fills
-that gap, in a single small desktop app.
+There is no good open-source tool for this. Schedulers typically resort
+to clunky paid tools or manual spreadsheet gymnastics to answer *"what
+changed?"* and *"can I take just these few changes?"* — this fills that
+gap, in a single small desktop app.
 
 ---
 
@@ -18,10 +21,12 @@ that gap, in a single small desktop app.
 ### Load files
 
 - **Pick** with the file dialog, or **drag-and-drop** an `.xer` file onto
-  the top bar. The first dropped file fills Baseline; the next fills
-  Revised. Drop two at once to fill both in order. The slot that will
-  receive the drop is highlighted with a cyan dashed outline while you drag.
-- **Swap** baseline and revised with one click.
+  the top bar. Empty slots fill in order — Trunk first, then Branch,
+  then the optional Branch base. Drop multiple files at once to fill
+  several slots in one go. The slot that will receive the drop is
+  highlighted with a cyan dashed outline while you drag.
+- **Swap** Trunk and Branch with one click if you loaded them in the
+  wrong order.
 
 ### Diff views — every category
 
@@ -51,44 +56,65 @@ that gap, in a single small desktop app.
 
 ### Project status dashboard
 
-Side-by-side **Baseline** vs **Revised** metrics: data date, planned
+Side-by-side **Trunk** vs **Branch** metrics: data date, planned
 start/finish, schedule % complete, activities by status (not started / in
 progress / completed), milestone count, critical activities (TF ≤ 0),
 relationship / WBS / resource / calendar totals. Differing rows are
 highlighted in amber.
 
-### Cherry-pick and export a merged XER
+### Merge a branch into a trunk
 
-- **"Apply" checkbox** on every changed row in **Activities** and **Logic**.
-  Default = apply (output equals the revised file). Uncheck a row to revert
-  that one change to the baseline value while leaving everything else
-  untouched.
-- **Bulk Apply all / Apply none** buttons in each tab's toolbar, scoped to
-  whatever is currently shown. Combine with filters or search to quickly
-  "apply all date shifts," "revert all logic changes," "revert these three
-  matching activities," etc.
-- **Live counter** in the top bar: "*N* apply · *M* revert".
-- **Export merged XER…** opens the save dialog, then writes a valid XER
-  that re-parses cleanly. The button is disabled and a spinner / progress
-  strip + phase label appear during the export, so you know exactly what's
-  happening:
+#### 2-way mode (trunk + branch)
 
-  | Phase | What you see |
-  |---|---|
-  | Working | <kbd>⌛ Exporting…</kbd> button + striped progress bar |
-  | Choose location | Status: *"Choose where to save…"* + native save dialog |
-  | Done | Status: *"Saved (3 changes reverted) → /path/to/merged.xer"* |
+The merged output **starts from the trunk** and selectively applies the
+branch's changes. Each row in Activities / Logic has an **Apply**
+checkbox with a status-aware default:
 
-  Every revert path is handled:
+| Branch did | Default | Why |
+|---|---|---|
+| **Added** a row | Apply ✓ | Bring the new row into the trunk |
+| **Modified** a row | Apply ✓ | Use the branch's values |
+| **Removed** a row | Skip ☐ | Without a branch base we can't tell "branch deleted it" from "trunk added it later" — defaulting to **skip** protects trunk data. Tick the box if you confirm the deletion. |
 
-  - *Modified* → field values restored to the baseline.
-  - *Added* → row deleted from the output.
-  - *Removed* → row re-inserted from the baseline's raw `TASK` /
-    `TASKPRED` record, with internal `task_id` / `pred_task_id` remapped
-    to avoid collisions with the revised file's IDs.
+Uncheck (or check) any row to override. **Bulk Apply all / Apply none**
+in each tab's toolbar acts on the currently-shown rows, so you can scope
+by filter + search before flipping in one click. A live counter in the
+top bar shows *N apply · M skip*.
 
-  Serialization preserves the original `ERMHDR` header and table/column
-  order.
+#### 3-way mode (trunk + branch + branch base)
+
+Load a Branch base — the trunk version the branch was cut from — and
+the engine switches to a **3-way merge** where every change is
+attributable:
+
+- *Clean* changes (branch modified a field, trunk hasn't touched it) are
+  applied automatically.
+- *No-op* changes (trunk already matches branch's new value) are
+  detected and ignored.
+- *Conflicts* (trunk has diverged from the base in a way branch also
+  touched) are surfaced on a dedicated **Conflicts** tab with four
+  kinds — add/add, modify/delete, delete/modify, modify/modify — and
+  per-row "Take branch / Keep trunk" plus per-field [Branch] [Trunk]
+  [Base] buttons. Bulk "Take branch / Keep trunk" resolves a whole
+  section at once. The export button stays disabled until every
+  conflict has a decision.
+
+#### Export
+
+**Export updated trunk…** opens the save dialog and writes a valid XER
+that re-parses cleanly. The button is disabled and a spinner + phase
+label appear while it runs:
+
+| Phase | What you see |
+|---|---|
+| Working | <kbd>⌛ Exporting…</kbd> button + striped progress bar |
+| Choose location | Status: *"Choose where to save…"* + native save dialog |
+| Done | Status: *"Saved (3 changes applied) → /path/to/trunk-updated.xer"* |
+
+Every merge path preserves the original `ERMHDR` header and table /
+column order, and remaps internal `proj_id` / `task_id` / `pred_task_id`
+references so the merged trunk is self-consistent even when the source
+files used different internal IDs for the same logical project.
 
 ### UI
 
@@ -150,23 +176,26 @@ up automatically.
 
 ## Usage
 
-1. **Click** "Choose Baseline" or **drag** a `.xer` file onto the top bar
-   to load File A.
-2. Load File B the same way. The **Overview** tab now shows the project
-   status side-by-side plus diff-summary counts per category.
-3. Open any category tab (**Activities**, **Logic**, **WBS**,
+1. Load the **Trunk** (current source of truth) — click "Choose Trunk"
+   or drag a `.xer` file onto the top bar.
+2. Load the **Branch** (file with proposed changes) the same way. The
+   **Overview** tab now shows the project status side-by-side plus
+   diff-summary counts per category.
+3. Optionally load a **Branch base** for high-fidelity 3-way merging.
+4. Open any category tab (**Activities**, **Logic**, **WBS**,
    **Resources**, **Calendars**) to see the row-by-row diff. Modified
    rows expand to show field-level changes; use the filter chips and
    search box to focus.
-4. On **Activities** and **Logic**, uncheck the **Apply** box on any rows
-   you want to *revert* (i.e., keep the baseline value for that row). Use
-   **Apply all** / **Apply none** to bulk-set the currently shown rows.
-5. Click **Export merged XER…** in the top bar to save the merged file.
+5. In 2-way mode: tick / untick the **Apply** box per row in Activities
+   and Logic. In 3-way mode: resolve any conflicts in the **Conflicts**
+   tab.
+6. Click **Export updated trunk…** in the top bar to save the merged
+   file as the new trunk.
 
-Try it with the sample fixtures in [`test-data/`](test-data/) — load
-`sample-baseline.xer` and `sample-revised.xer` to see every diff branch
-(added, removed, modified activities; added, removed, modified logic;
-data-date shift) exercised in a tiny project.
+Try it with the sample fixtures in [`test-data/`](test-data/) —
+`sample-baseline.xer` makes a good trunk and `sample-revised.xer` makes a
+good branch. Add `sample-target.xer` as the Branch base to switch into
+3-way mode and exercise every conflict kind.
 
 ---
 

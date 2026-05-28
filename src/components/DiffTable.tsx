@@ -158,10 +158,10 @@ export function DiffTable<T>({
         visibleCount={visibleRows.length}
         showDecision={showDecision}
         onApplyAllVisible={
-          onBulkSetDecisions ? () => onBulkSetDecisions(visibleChangeKeys, 'accept') : undefined
+          onBulkSetDecisions ? () => onBulkSetDecisions(visibleChangeKeys, 'apply') : undefined
         }
         onApplyNoneVisible={
-          onBulkSetDecisions ? () => onBulkSetDecisions(visibleChangeKeys, 'reject') : undefined
+          onBulkSetDecisions ? () => onBulkSetDecisions(visibleChangeKeys, 'skip') : undefined
         }
         visibleChangeCount={visibleChangeKeys.length}
       />
@@ -199,7 +199,7 @@ export function DiffTable<T>({
                     colWidth={colWidth}
                     expanded={isExpanded}
                     onToggle={() => toggleExpanded(row.key)}
-                    decision={showDecision ? (decisions!.get(row.key) ?? 'accept') : undefined}
+                    decision={showDecision ? (decisions!.get(row.key) ?? 'apply') : undefined}
                     onToggleDecision={showDecision ? () => onToggleDecision!(row.key) : undefined}
                     decisionWidth={showDecision ? DECISION_WIDTH : 0}
                   />
@@ -254,7 +254,7 @@ function Toolbar<T>({
             onClick={onApplyAllVisible}
             disabled={visibleChangeCount === 0}
             className="px-2.5 py-1 text-xs font-medium rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            title={`Mark all ${visibleChangeCount} currently-shown changes as Apply`}
+            title={`Apply all ${visibleChangeCount} currently-shown branch changes to the trunk`}
           >
             Apply all
           </button>
@@ -262,7 +262,7 @@ function Toolbar<T>({
             onClick={onApplyNoneVisible}
             disabled={visibleChangeCount === 0}
             className="px-2.5 py-1 text-xs font-medium rounded-md border border-red-500/40 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            title={`Mark all ${visibleChangeCount} currently-shown changes as Revert`}
+            title={`Skip all ${visibleChangeCount} currently-shown branch changes (trunk keeps its state)`}
           >
             Apply none
           </button>
@@ -379,8 +379,8 @@ function Row<T>({
               <input
                 type="checkbox"
                 aria-label="Apply this change"
-                title={decision === 'accept' ? 'Will be applied — uncheck to revert' : 'Will be reverted — check to keep this change'}
-                checked={decision === 'accept'}
+                title={decision === 'apply' ? 'Will be applied to the merged trunk — uncheck to skip' : 'Will be skipped (trunk keeps its current state) — check to apply this change'}
+                checked={decision === 'apply'}
                 onChange={onToggleDecision}
                 className="w-4 h-4 cursor-pointer accent-accent"
               />
